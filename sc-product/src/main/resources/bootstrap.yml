@@ -1,0 +1,98 @@
+# Tomcat
+server:
+  port: 8002
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+    context-path: /sc-product
+# Spring
+spring:
+  application:
+    # 应用名称
+    name: sc-product
+  profiles:
+    # 环境配置
+    active: test
+  cloud:
+    sentinel:
+      # 取消控制台懒加载，启动即初始化
+      eager: true
+      transport:
+        # Sentinel 控制台地址（未启动控制台也不影响限流规则生效）
+        dashboard: localhost:8858
+        # 本地与控制台通信端口
+        port: 8719
+    nacos:
+      discovery:
+        # 服务注册地址
+        server-addr: localhost:8848
+      config:
+        # 配置中心地址
+        server-addr: localhost:8848
+        # 配置文件格式
+        file-extension: yml
+        # 共享配置
+        shared-configs:
+          - application-${spring.profiles.active}.${spring.cloud.nacos.config.file-extension}
+  # Redis
+  redis:
+    host: localhost
+    port: 6379
+    database: 0
+    timeout: 3000ms
+  # Elasticsearch：商品描述模糊检索
+  elasticsearch:
+    rest:
+      uris: http://localhost:9200
+      connection-timeout: 3s
+      read-timeout: 10s
+
+# 商品描述 ES 索引配置
+product:
+  es:
+    # 索引名（ProductDescDoc @Document 使用）
+    index-name: product_desc
+    # 单次 match 查询返回的最大 pId 数量，防止 IN 列表过大
+    max-hit-ids: 1000
+    # 增量同步扫描的最近分钟数（HandleProDescJob 使用）
+    incremental-minutes: 10
+    # 增量同步每页大小
+    sync-page-size: 500
+  export:
+    # 导出文件存放目录
+    dir: ./export-files
+    # 单次导出最大行数
+    max-rows: 100000
+    # 分页查询每页大小
+    page-size: 1000
+
+# xxl-job
+xxl:
+  job:
+    # 调度中心地址
+    admin:
+      addresses: http://localhost:8080/xxl-job-admin
+    # 通信令牌，与调度中心一致；为空则关闭
+    accessToken:
+    executor:
+      appname: sc-product
+      address:
+      ip:
+      port: 9999
+      logpath: ./xxl-job/jobhandler
+      logretentiondays: 30
+
+# Redisson
+redisson:
+  config: |
+    singleServerConfig:
+      address: "redis://localhost:6379"
+      database: 0
+      connectionMinimumIdleSize: 8
+      connectionPoolSize: 32
+      idleConnectionTimeout: 10000
+      connectTimeout: 3000
+      timeout: 3000
+

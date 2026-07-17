@@ -1,0 +1,50 @@
+package com.example.scuser.service;
+
+import com.baomidou.mybatisplus.extension.service.IService;
+import com.curry.model.User;
+import response.ResponseDto;
+
+import javax.servlet.http.HttpServletResponse;
+
+public interface UserService extends IService<User> {
+
+    /**
+     * 用户注册
+     */
+    ResponseDto<User> register(User user);
+
+    /**
+     * 用户登录
+     */
+    ResponseDto<User> login(String uName, String password);
+
+    /**
+     * 分页查询用户
+     */
+    ResponseDto<User> queryUser(String key, Integer gender, String birthdayStart, String birthdayEnd, int pageNo, int pageSize);
+
+    /**
+     * 发送短信验证码（模拟）：根据手机号定位用户并生成验证码
+     */
+    ResponseDto<User> sendSmsCode(String phone);
+
+    /**
+     * 校验验证码并重置密码
+     */
+    ResponseDto<User> resetPassword(String phone, String code, String newPassword);
+
+    /**
+     * 根据用户ID查询用户基本信息（不含密码）
+     */
+    ResponseDto<User> getDetailById(Integer uId);
+
+    /**
+     * 修改用户基本信息（realName/gender/phone/birthday）
+     */
+    ResponseDto<User> updateProfile(User user);
+
+    /**
+     * 按查询条件导出用户列表为 Excel（EasyExcel）
+     */
+    void export(String key, Integer gender, String birthdayStart, String birthdayEnd, HttpServletResponse response) throws Exception;
+}

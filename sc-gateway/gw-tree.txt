@@ -1,0 +1,165 @@
+com.example:sc-gateway:jar:0.0.1-SNAPSHOT
++- org.springframework.boot:spring-boot-starter:jar:2.5.6:compile
+|  +- org.springframework.boot:spring-boot:jar:2.5.6:compile
+|  |  \- org.springframework:spring-context:jar:5.3.12:compile
+|  |     +- org.springframework:spring-aop:jar:5.3.12:compile
+|  |     \- org.springframework:spring-expression:jar:5.3.12:compile
+|  +- org.springframework.boot:spring-boot-autoconfigure:jar:2.5.6:compile
+|  +- org.springframework.boot:spring-boot-starter-logging:jar:2.5.6:compile
+|  |  +- ch.qos.logback:logback-classic:jar:1.2.6:compile
+|  |  |  \- ch.qos.logback:logback-core:jar:1.2.6:compile
+|  |  +- org.apache.logging.log4j:log4j-to-slf4j:jar:2.16.0:compile
+|  |  |  \- org.apache.logging.log4j:log4j-api:jar:2.16.0:compile
+|  |  \- org.slf4j:jul-to-slf4j:jar:1.7.32:compile
+|  +- jakarta.annotation:jakarta.annotation-api:jar:1.3.5:compile
+|  +- org.springframework:spring-core:jar:5.3.12:compile
+|  |  \- org.springframework:spring-jcl:jar:5.3.12:compile
+|  \- org.yaml:snakeyaml:jar:1.28:compile
++- org.springframework.boot:spring-boot-starter-test:jar:2.5.6:test
+|  +- org.springframework.boot:spring-boot-test:jar:2.5.6:test
+|  +- org.springframework.boot:spring-boot-test-autoconfigure:jar:2.5.6:test
+|  +- com.jayway.jsonpath:json-path:jar:2.5.0:test
+|  |  \- net.minidev:json-smart:jar:2.4.7:test
+|  |     \- net.minidev:accessors-smart:jar:2.4.7:test
+|  |        \- org.ow2.asm:asm:jar:9.1:test
+|  +- jakarta.xml.bind:jakarta.xml.bind-api:jar:2.3.3:test
+|  |  \- jakarta.activation:jakarta.activation-api:jar:1.2.2:test
+|  +- org.assertj:assertj-core:jar:3.19.0:test
+|  +- org.hamcrest:hamcrest:jar:2.2:test
+|  +- org.junit.jupiter:junit-jupiter:jar:5.7.2:test
+|  |  +- org.junit.jupiter:junit-jupiter-api:jar:5.7.2:test
+|  |  |  +- org.apiguardian:apiguardian-api:jar:1.1.0:test
+|  |  |  +- org.opentest4j:opentest4j:jar:1.2.0:test
+|  |  |  \- org.junit.platform:junit-platform-commons:jar:1.7.2:test
+|  |  +- org.junit.jupiter:junit-jupiter-params:jar:5.7.2:test
+|  |  \- org.junit.jupiter:junit-jupiter-engine:jar:5.7.2:test
+|  |     \- org.junit.platform:junit-platform-engine:jar:1.7.2:test
+|  +- org.mockito:mockito-core:jar:3.9.0:test
+|  |  +- net.bytebuddy:byte-buddy:jar:1.10.22:test
+|  |  +- net.bytebuddy:byte-buddy-agent:jar:1.10.22:test
+|  |  \- org.objenesis:objenesis:jar:3.2:test
+|  +- org.mockito:mockito-junit-jupiter:jar:3.9.0:test
+|  +- org.skyscreamer:jsonassert:jar:1.5.0:test
+|  |  \- com.vaadin.external.google:android-json:jar:0.0.20131108.vaadin1:test
+|  +- org.springframework:spring-test:jar:5.3.12:test
+|  \- org.xmlunit:xmlunit-core:jar:2.8.3:test
++- org.springframework.cloud:spring-cloud-starter-gateway:jar:3.0.4:compile
+|  +- org.springframework.cloud:spring-cloud-starter:jar:3.0.4:compile
+|  |  \- org.springframework.security:spring-security-rsa:jar:1.0.10.RELEASE:compile
+|  |     \- org.bouncycastle:bcpkix-jdk15on:jar:1.68:compile
+|  |        \- org.bouncycastle:bcprov-jdk15on:jar:1.68:compile
+|  +- org.springframework.cloud:spring-cloud-gateway-server:jar:3.0.4:compile
+|  |  +- org.springframework.boot:spring-boot-starter-validation:jar:2.5.6:compile
+|  |  |  +- org.apache.tomcat.embed:tomcat-embed-el:jar:9.0.54:compile
+|  |  |  \- org.hibernate.validator:hibernate-validator:jar:6.2.0.Final:compile
+|  |  |     +- jakarta.validation:jakarta.validation-api:jar:2.0.2:compile
+|  |  |     +- org.jboss.logging:jboss-logging:jar:3.4.2.Final:compile
+|  |  |     \- com.fasterxml:classmate:jar:1.5.1:compile
+|  |  \- io.projectreactor.addons:reactor-extra:jar:3.4.5:compile
+|  \- org.springframework.boot:spring-boot-starter-webflux:jar:2.5.6:compile
+|     +- org.springframework.boot:spring-boot-starter-json:jar:2.5.6:compile
+|     |  +- com.fasterxml.jackson.datatype:jackson-datatype-jdk8:jar:2.12.5:compile
+|     |  +- com.fasterxml.jackson.datatype:jackson-datatype-jsr310:jar:2.12.5:compile
+|     |  \- com.fasterxml.jackson.module:jackson-module-parameter-names:jar:2.12.5:compile
+|     +- org.springframework.boot:spring-boot-starter-reactor-netty:jar:2.5.6:compile
+|     |  \- io.projectreactor.netty:reactor-netty-http:jar:1.0.12:compile
+|     |     \- io.projectreactor.netty:reactor-netty-core:jar:1.0.12:compile
+|     \- org.springframework:spring-webflux:jar:5.3.12:compile
++- com.alibaba.cloud:spring-cloud-starter-alibaba-nacos-discovery:jar:2021.1:compile
+|  +- com.alibaba.cloud:spring-cloud-alibaba-commons:jar:2021.1:compile
+|  +- com.alibaba.spring:spring-context-support:jar:1.0.10:compile
+|  +- org.springframework.cloud:spring-cloud-commons:jar:3.0.4:compile
+|  |  \- org.springframework.security:spring-security-crypto:jar:5.5.3:compile
+|  \- org.springframework.cloud:spring-cloud-context:jar:3.0.4:compile
++- com.alibaba.cloud:spring-cloud-starter-alibaba-nacos-config:jar:2021.1:compile
++- org.springframework.cloud:spring-cloud-starter-bootstrap:jar:3.0.4:compile
++- org.springframework.boot:spring-boot-configuration-processor:jar:2.5.6:compile (optional) 
++- com.alibaba.nacos:nacos-client:jar:2.0.3:compile
+|  +- commons-codec:commons-codec:jar:1.15:compile
+|  +- com.fasterxml.jackson.core:jackson-core:jar:2.12.5:compile
+|  +- com.fasterxml.jackson.core:jackson-databind:jar:2.12.5:compile
+|  |  \- com.fasterxml.jackson.core:jackson-annotations:jar:2.12.5:compile
+|  +- org.apache.httpcomponents:httpasyncclient:jar:4.1.4:compile
+|  |  +- org.apache.httpcomponents:httpcore:jar:4.4.14:compile
+|  |  +- org.apache.httpcomponents:httpcore-nio:jar:4.4.14:compile
+|  |  \- org.apache.httpcomponents:httpclient:jar:4.5.13:compile
+|  +- org.reflections:reflections:jar:0.9.11:compile
+|  |  +- com.google.guava:guava:jar:20.0:compile
+|  |  \- org.javassist:javassist:jar:3.21.0-GA:compile
+|  \- io.prometheus:simpleclient:jar:0.10.0:compile
++- org.springframework.cloud:spring-cloud-starter-openfeign:jar:3.0.4:compile
+|  +- org.springframework.cloud:spring-cloud-openfeign-core:jar:3.0.4:compile
+|  |  +- org.springframework.boot:spring-boot-starter-aop:jar:2.5.6:compile
+|  |  |  \- org.aspectj:aspectjweaver:jar:1.9.7:compile
+|  |  \- io.github.openfeign.form:feign-form-spring:jar:3.8.0:compile
+|  |     +- io.github.openfeign.form:feign-form:jar:3.8.0:compile
+|  |     \- commons-fileupload:commons-fileupload:jar:1.4:compile
+|  |        \- commons-io:commons-io:jar:2.2:compile
+|  +- org.springframework:spring-web:jar:5.3.12:compile
+|  |  \- org.springframework:spring-beans:jar:5.3.12:compile
+|  +- io.github.openfeign:feign-core:jar:10.12:compile
+|  \- io.github.openfeign:feign-slf4j:jar:10.12:compile
++- org.springframework.cloud:spring-cloud-starter-loadbalancer:jar:3.0.4:compile
+|  +- org.springframework.cloud:spring-cloud-loadbalancer:jar:3.0.4:compile
+|  |  \- io.projectreactor:reactor-core:jar:3.4.11:compile
+|  |     \- org.reactivestreams:reactive-streams:jar:1.0.3:compile
+|  +- org.springframework.boot:spring-boot-starter-cache:jar:2.5.6:compile
+|  |  \- org.springframework:spring-context-support:jar:5.3.12:compile
+|  \- com.stoyanr:evictor:jar:1.0.0:compile
++- cn.hutool:hutool-all:jar:5.7.16:compile
++- com.xuxueli:xxl-job-core:jar:2.3.0:compile
+|  +- io.netty:netty-all:jar:4.1.69.Final:compile
+|  |  +- io.netty:netty-buffer:jar:4.1.69.Final:compile
+|  |  +- io.netty:netty-codec:jar:4.1.69.Final:compile
+|  |  +- io.netty:netty-codec-dns:jar:4.1.69.Final:compile
+|  |  +- io.netty:netty-codec-haproxy:jar:4.1.69.Final:compile
+|  |  +- io.netty:netty-codec-http:jar:4.1.69.Final:compile
+|  |  +- io.netty:netty-codec-http2:jar:4.1.69.Final:compile
+|  |  +- io.netty:netty-codec-memcache:jar:4.1.69.Final:compile
+|  |  +- io.netty:netty-codec-mqtt:jar:4.1.69.Final:compile
+|  |  +- io.netty:netty-codec-redis:jar:4.1.69.Final:compile
+|  |  +- io.netty:netty-codec-smtp:jar:4.1.69.Final:compile
+|  |  +- io.netty:netty-codec-socks:jar:4.1.69.Final:compile
+|  |  +- io.netty:netty-codec-stomp:jar:4.1.69.Final:compile
+|  |  +- io.netty:netty-codec-xml:jar:4.1.69.Final:compile
+|  |  +- com.fasterxml:aalto-xml:jar:1.0.0:compile
+|  |  +- org.codehaus.woodstox:stax2-api:jar:4.0.0:compile
+|  |  +- io.netty:netty-common:jar:4.1.69.Final:compile
+|  |  +- io.netty:netty-handler:jar:4.1.69.Final:compile
+|  |  +- io.netty:netty-handler-proxy:jar:4.1.69.Final:compile
+|  |  +- io.netty:netty-resolver:jar:4.1.69.Final:compile
+|  |  +- io.netty:netty-resolver-dns:jar:4.1.69.Final:compile
+|  |  +- io.netty:netty-transport:jar:4.1.69.Final:compile
+|  |  +- io.netty:netty-transport-rxtx:jar:4.1.69.Final:compile
+|  |  +- org.rxtx:rxtx:jar:2.1.7:compile
+|  |  +- io.netty:netty-transport-sctp:jar:4.1.69.Final:compile
+|  |  +- io.netty:netty-transport-udt:jar:4.1.69.Final:compile
+|  |  +- com.barchart.udt:barchart-udt-bundle:jar:2.3.0:compile
+|  |  +- io.netty:netty-transport-native-epoll:jar:4.1.69.Final:compile
+|  |  +- io.netty:netty-transport-native-unix-common:jar:4.1.69.Final:compile
+|  |  +- io.netty:netty-transport-native-kqueue:jar:4.1.69.Final:compile
+|  |  +- io.netty:netty-resolver-dns-native-macos:jar:4.1.69.Final:compile
+|  |  +- io.netty:netty-transport-native-epoll:jar:linux-x86_64:4.1.69.Final:compile
+|  |  +- io.netty:netty-transport-native-epoll:jar:linux-aarch_64:4.1.69.Final:runtime
+|  |  +- io.netty:netty-transport-native-kqueue:jar:osx-x86_64:4.1.69.Final:runtime
+|  |  +- io.netty:netty-transport-native-kqueue:jar:osx-aarch_64:4.1.69.Final:runtime
+|  |  +- io.netty:netty-resolver-dns-native-macos:jar:osx-x86_64:4.1.69.Final:compile
+|  |  \- io.netty:netty-resolver-dns-native-macos:jar:osx-aarch_64:4.1.69.Final:runtime
+|  +- com.google.code.gson:gson:jar:2.8.8:compile
+|  +- org.codehaus.groovy:groovy:jar:3.0.9:compile
+|  \- org.slf4j:slf4j-api:jar:1.7.32:compile
++- org.projectlombok:lombok:jar:1.18.22:compile
+\- com.alibaba:easyexcel:jar:3.1.1:compile
+   \- com.alibaba:easyexcel-core:jar:3.1.1:compile
+      +- com.alibaba:easyexcel-support:jar:3.1.1:compile
+      +- org.apache.poi:poi:jar:4.1.2:compile
+      |  +- org.apache.commons:commons-collections4:jar:4.4:compile
+      |  +- org.apache.commons:commons-math3:jar:3.6.1:compile
+      |  \- com.zaxxer:SparseBitSet:jar:1.2:compile
+      +- org.apache.poi:poi-ooxml:jar:4.1.2:compile
+      |  +- org.apache.commons:commons-compress:jar:1.19:compile
+      |  \- com.github.virtuald:curvesapi:jar:1.06:compile
+      +- org.apache.poi:poi-ooxml-schemas:jar:4.1.2:compile
+      |  \- org.apache.xmlbeans:xmlbeans:jar:3.1.0:compile
+      +- org.apache.commons:commons-csv:jar:1.8:compile
+      \- org.ehcache:ehcache:jar:3.9.7:compile

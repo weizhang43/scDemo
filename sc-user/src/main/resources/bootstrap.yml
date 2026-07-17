@@ -1,0 +1,56 @@
+# Tomcat
+server:
+  port: 8003
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+    context-path: /sc-user
+# sc-demo-service（对话服务）HTTP 地址
+scdemo:
+  chat:
+    base-url: http://localhost:9000
+# Spring
+spring:
+  # 图片上传大小限制（图片文字识别）
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+  # SSE 流式代理需要较长的异步超时时间
+  mvc:
+    async:
+      request-timeout: 120000
+  application:
+    # 应用名称
+    name: sc-user
+  profiles:
+    # 环境配置
+    active: test
+  cloud:
+    nacos:
+      discovery:
+        # 服务注册地址
+        server-addr: localhost:8848
+      config:
+        # 配置中心地址
+        server-addr: localhost:8848
+        # 配置文件格式
+        file-extension: yml
+        # 共享配置
+        shared-configs:
+          - data-id: application-${spring.profiles.active}.${spring.cloud.nacos.config.file-extension}
+            refresh: true
+  # Redis 共享 Session
+  redis:
+    host: localhost
+    port: 6379
+    database: 0
+    timeout: 3000ms
+    lettuce:
+      pool:
+        max-active: 16
+        max-idle: 8
+        min-idle: 2
+        max-wait: 2000ms
