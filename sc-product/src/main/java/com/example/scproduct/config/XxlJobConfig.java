@@ -34,6 +34,9 @@ public class XxlJobConfig {
     @Value("${xxl.job.executor.logretentiondays:30}")
     private int logRetentionDays;
 
+    /**
+     * 创建 XXL-Job 执行器 Bean，注册到调度中心并按配置暴露本机执行端口。
+     */
     @Bean
     public XxlJobSpringExecutor xxlJobExecutor() {
         log.info(">>>>>>>>>>> xxl-job init: adminAddresses={}, appname={}", adminAddresses, appname);

@@ -40,6 +40,9 @@ public class ProductController {
                     "零食","汽车","饮料","电风扇","手机壳");
 
 
+    /**
+     * 批量生成 100 条随机商品（演示链路），通过 saveBatch 分批入库。
+     */
     @PostMapping("/createProduct")
     public ResponseDto<Product> createProduct() {
         List<Product> productList = new java.util.ArrayList<>();
@@ -55,11 +58,17 @@ public class ProductController {
         return ResponseDto.success(null);
     }
 
+    /**
+     * 按主键查询商品。
+     */
     @GetMapping("/{id}")
     public Product get(@PathVariable("id") Integer id) {
         return productService.getById(id);
     }
 
+    /**
+     * 查询全部商品列表。
+     */
     @GetMapping("/list")
     public List<Product> list() {
         return productService.list();
@@ -76,17 +85,26 @@ public class ProductController {
         return ResponseDto.success(productService.listByIds(ids));
     }
 
+    /**
+     * 按主键更新商品信息。
+     */
     @PutMapping
     public boolean update(@RequestBody Product product) {
         return productService.updateById(product);
     }
 
+    /**
+     * 按主键删除商品。
+     */
     @DeleteMapping("/{id}")
     public boolean delete(@PathVariable("id") Integer id) {
         return productService.removeById(id);
     }
 
 
+    /**
+     * 商品查询（简易版）：按关键字、价格等过滤分页返回。
+     */
     @GetMapping("/queryProduct")
     public ResponseDto<Product> queryProduct(String key,int price,int pageNo,int pageSize) {
         return productService.queryProduct(key,price,pageNo,pageSize);

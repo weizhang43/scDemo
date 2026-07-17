@@ -13,6 +13,10 @@ import java.util.Date;
 import java.util.List;
 
 public interface OrderService extends IService<Order> {
+    /**
+     * 演示链路：创建订单并通过 Feign 调用 sc-product 创建商品，全程在 Seata 全局事务下，
+     * 触发异常会引发跨服务全局回滚。
+     */
     ResponseDto<Order> addOrder();
 
     /**

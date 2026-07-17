@@ -24,6 +24,9 @@ public class InnerAuthFilter extends OncePerRequestFilter {
             "/actuator"
     };
 
+    /**
+     * 内部鉴权过滤：actuator 路径放行；其它路径要求请求头携带网关注入的 X-User-Id，缺失则直接返回 401。
+     */
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,

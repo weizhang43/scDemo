@@ -9,5 +9,9 @@ import com.example.scorder.dto.SeckillRequest;
  */
 public interface SeckillOrderProducer {
 
+    /**
+     * 将秒杀下单消息投递到队列，由消费者异步落库。
+     * @param message 秒杀请求（含 uId/pId/addressId/addPerson）
+     */
     void send(SeckillRequest message);
 }

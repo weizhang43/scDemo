@@ -64,6 +64,10 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     /** 秒杀结果 key 前缀：seckill:result:{uId}:{pId} */
     private static final String SECKILL_RESULT_KEY = "seckill:result:";
 
+    /**
+     * 演示链路：本地创建订单 + Feign 远程创建商品，外加一次 1/0 异常。
+     * 通过 @GlobalTransactional 让 Seata 协调跨服务事务，远程调用失败会触发全局回滚。
+     */
     @Override
     @GlobalTransactional //开启事务
     public ResponseDto<Order> addOrder() {
@@ -83,6 +87,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
     }
 
+    /**
+     * 按关键字/订单号/创建时间区间分页查询订单，按创建时间与主键倒序返回。
+     */
     @Override
     public ResponseDto<Order> queryOrder(String key, String orderNo, Date createTimeStart, Date createTimeEnd, int pageNo, int pageSize) {
         Page<Order> page = new Page<>(pageNo, pageSize);
@@ -97,6 +104,10 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return ResponseDto.success(page);
     }
 
+    /**
+     * 按查询条件导出订单 Excel：使用 EasyExcel 直接写入 HttpServletResponse 输出流。
+     * @param response Servlet 响应，文件名以 UTF-8 编码避免中文乱码
+     */
     @Override
     public void export(String key, String orderNo, Date createTimeStart, Date createTimeEnd, HttpServletResponse response) throws Exception {
         LambdaQueryWrapper<Order> queryWrapper = new LambdaQueryWrapper<Order>()
@@ -121,6 +132,10 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 .doWrite(rows);
     }
 
+    /**
+     * 批量下单（旧版）：远程扣减库存 + 本地写订单，订单金额为商品价格求和。
+     * 全程在 Seata 全局事务下，远程扣库存失败直接返回错误。
+     */
     @Override
     @GlobalTransactional
     public ResponseDto<Order> placeOrder(List<Product> products, String addPerson) {
@@ -193,6 +208,10 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
     }
 
+    /**
+     * 实际下单逻辑：扣库存 → 拉地址快照 → 写订单 → 批量写订单商品中间表，附带商品名称快照。
+     * 任一步失败由 Seata 全局回滚保证最终一致。
+     */
     private ResponseDto<Order> doPlaceOrder(PlaceOrderRequest request) {
         // 1. 组装扣库存入参，并把前端传的 price/quantity 同步过去
         List<Product> deductItems = new ArrayList<>();
@@ -279,6 +298,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return ResponseDto.success(order);
     }
 
+    /**
+     * 把地址对象拼接为单行文本：收件人 + 电话 + 省市区 + 详情。
+     */
     private String buildAddressText(Address addr) {
         StringBuilder sb = new StringBuilder();
         if (addr.getConsignee() != null) sb.append(addr.getConsignee()).append(' ');
@@ -304,6 +326,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return "ORD" + dayPrefix + df.format(seq);
     }
 
+    /**
+     * 校验订单状态合法后按主键更新状态。状态枚举：0 取消 / 1 已下单 / 2 已完成。
+     */
     @Override
     public ResponseDto<Order> updateStatus(Integer id, Integer orderStatus) {
         if (id == null) {
@@ -323,6 +348,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return rows > 0 ? ResponseDto.success(null) : ResponseDto.error("更新订单状态失败");
     }
 
+    /**
+     * 按主键查询订单并关联查询订单商品明细，计算每个明细的小计金额。
+     */
     @Override
     public Order getById(Serializable id) {
         Order order = orderMapper.selectById(id);
@@ -347,6 +375,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return order;
     }
 
+    /**
+     * 按主键删除订单，删除前校验订单是否存在。
+     */
     @Override
     public ResponseDto<Order> removeOrder(Integer id) {
         if (id == null) {
@@ -360,6 +391,10 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return rows > 0 ? ResponseDto.success(null) : ResponseDto.error("删除订单失败");
     }
 
+    /**
+     * 秒杀下单同步段：参数校验 → 远程 Redis 原子预扣库存挡超卖 → 写 PENDING 结果到 Redis → 投递队列异步落库。
+     * 预扣失败为终态 FAILED，预扣成功立即返回 PENDING 供前端轮询。
+     */
     @Override
     public ResponseDto<SeckillResultVO> seckill(SeckillRequest request) {
         if (request == null || request.getuId() == null || request.getpId() == null) {
@@ -382,6 +417,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return ResponseDto.success(pending);
     }
 
+    /**
+     * 供前端轮询查询秒杀结果：从 Redis 读取 PENDING/SUCCESS/FAILED，无记录返回 NONE。
+     */
     @Override
     public SeckillResultVO seckillResult(Integer uId, Integer pId) {
         if (uId == null || pId == null) {
@@ -393,6 +431,10 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return vo != null ? vo : new SeckillResultVO("NONE", "无秒杀记录", null);
     }
 
+    /**
+     * 秒杀落库异步段（由消费者调用）：在 Seata 全局事务下扣真实库存 + 创建订单 + 写订单商品明细。
+     * 成功写 SUCCESS 结果；失败则补偿回滚 Redis 预扣并允许用户重试，再抛异常触发 Seata 全局回滚订单与真实库存。
+     */
     @Override
     @GlobalTransactional
     public void processSeckillOrder(SeckillRequest req) {
@@ -470,6 +512,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
     }
 
+    /**
+     * 将秒杀结果写入 Redis，有效期 1 小时，供前端轮询查询。
+     */
     private void saveSeckillResult(Integer uId, Integer pId, SeckillResultVO vo) {
         RBucket<SeckillResultVO> bucket = redissonClient.getBucket(SECKILL_RESULT_KEY + uId + ":" + pId);
         bucket.set(vo, 1, TimeUnit.HOURS);

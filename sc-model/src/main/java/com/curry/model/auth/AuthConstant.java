@@ -31,6 +31,9 @@ public final class AuthConstant {
     /** Bearer 前缀 */
     public static final String BEARER_PREFIX = "Bearer ";
 
+    /**
+     * 拼装登录 token 在 Redis 中的 key，格式：login:token:{uId}:{token}。
+     */
     public static String buildTokenKey(Integer uId, String token) {
         return LOGIN_TOKEN_KEY_PREFIX + uId + ":" + token;
     }

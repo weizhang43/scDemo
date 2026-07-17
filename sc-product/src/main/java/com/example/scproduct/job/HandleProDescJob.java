@@ -25,6 +25,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * 商品描述 AI 填充 + ES 同步任务。
+ * 调度名称：handleProDescJob
+ * 逻辑：分页扫表，并发调用 chat 服务为 proDesc 为空或待补的商品生成 200 字描述，
+ *       批量更新 MySQL，并把变更同步到 ES 索引（ES 异常不阻断 AI 主流程）。
+ */
 @Slf4j
 @Component
 public class HandleProDescJob {
@@ -51,6 +57,10 @@ public class HandleProDescJob {
     private static final int CONCURRENCY = 8;
     private static final long AWAIT_TIMEOUT_MINUTES = 5;
 
+    /**
+     * XXL-Job 入口：游标分页扫表，固定线程池并发为商品补 proDesc，写回 MySQL 并同步到 ES。
+     * 单批并发等待最长 5 分钟，超时则记录并继续下一批。
+     */
     @XxlJob("handleProDescJob")
     public void execute() {
         String now = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
@@ -153,6 +163,10 @@ public class HandleProDescJob {
         }
     }
 
+    /**
+     * 调用 chat 服务为单个商品生成描述：构造"请给商品 X 加一个 200 字左右的描述"作为 query，
+     * 响应非空则回写到 product.proDesc，由调用方统一批量入库。
+     */
     private void fillProDesc(Product product) {
         try {
             String name = product.getPName();

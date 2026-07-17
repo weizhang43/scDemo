@@ -10,8 +10,7 @@ import java.util.List;
 
 public interface ProductService extends IService<Product> {
     /**
-     *
-     * @return
+     * 演示链路：插入一条固定名称的垃圾袋商品（演示链路，仅用于联调）。
      */
     ResponseDto<Product> addProduct();
 

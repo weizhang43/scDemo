@@ -78,6 +78,9 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
             "redis.call('srem', KEYS[2], ARGV[1]) " +
             "return 1";
 
+    /**
+     * 演示链路：插入一条固定垃圾袋商品。
+     */
     @Override
     public ResponseDto<Product> addProduct() {
         Product product = new Product();
@@ -88,6 +91,9 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
         return ResponseDto.success(null);
     }
 
+    /**
+     * 按商品名关键字 + 价格区间分页查询，按价格倒序、ID 升序返回。
+     */
     @Override
     public ResponseDto<Product> queryProduct(String key, int price, int pageNo, int pageSize) {
         Page<Product> page = new Page<>(pageNo,pageSize);
@@ -101,6 +107,9 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
         return ResponseDto.success(page);
     }
 
+    /**
+     * 多条件分页查询：复用 buildListWrapper（含 ES 模糊检索降级），并把 Redis 中实时点赞数合并回结果。
+     */
     @Override
     public ResponseDto<Product> pageQuery(String pName,
                                          String proDesc,
@@ -181,6 +190,9 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
         }
     }
 
+    /**
+     * 新增商品：根据生产日期+保质期自动计算 is_expired 字段后入库。
+     */
     @Override
     public ResponseDto<Product> addOne(Product product) {
         refreshExpiredFlag(product);
@@ -188,6 +200,10 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
         return ResponseDto.success(null);
     }
 
+    /**
+     * 商品点赞：Redis Hash 计数并标脏等待回写；首次点赞时以 DB 现值播种。
+     * Redis 不可用时降级为直接 SQL 累加，保证功能可用。
+     */
     @Override
     public ResponseDto<Product> like(Integer id) {
         if (id == null) {
@@ -222,6 +238,10 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
         }
     }
 
+    /**
+     * 批量回写脏集合中商品的点赞数：先移出脏集合，幂等覆盖 DB 值；失败时重新标脏等下次重试。
+     * @return 实际回写成功的商品数
+     */
     @Override
     public int flushLikeCount() {
         RSet<Integer> dirtySet = redissonClient.getSet(LIKE_DIRTY_KEY);
@@ -256,6 +276,10 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
         return flushed;
     }
 
+    /**
+     * 秒杀预扣库存：Redis 无库存时懒加载 DB 并校验是否可秒杀；以 Lua 脚本原子完成一人一单校验+扣减+已购记录。
+     * @return code=200 预扣成功；非 200 为失败原因（已售罄/已参与/未就绪/商品不存在等）
+     */
     @Override
     public ResponseDto<Product> seckillPreDeduct(Integer pId, Integer uId) {
         if (pId == null || uId == null) {

@@ -38,6 +38,9 @@ public class OrderExportVO {
     @ExcelProperty(value = "订单状态")
     private String orderStatus;
 
+    /**
+     * 工厂方法：将订单实体转换为导出 VO，并填入序号与状态文案。
+     */
     public static OrderExportVO of(com.curry.model.Order o, int index) {
         OrderExportVO vo = new OrderExportVO();
         vo.setIndex(index);
@@ -50,6 +53,9 @@ public class OrderExportVO {
         return vo;
     }
 
+    /**
+     * 将订单状态码转换为导出文案：0 取消 / 1 已下单 / 2 已完成，其它为"未知"。
+     */
     private static String statusText(Integer s) {
         if (s == null) return "未知";
         switch (s) {

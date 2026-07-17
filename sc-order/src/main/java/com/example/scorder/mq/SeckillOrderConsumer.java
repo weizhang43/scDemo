@@ -29,6 +29,9 @@ public class SeckillOrderConsumer {
     private volatile boolean running = true;
     private Thread worker;
 
+    /**
+     * 容器初始化后启动后台守护线程循环消费秒杀队列。
+     */
     @PostConstruct
     public void start() {
         worker = new Thread(this::loop, "seckill-order-consumer");
@@ -37,6 +40,9 @@ public class SeckillOrderConsumer {
         log.info("[seckill-consumer] started");
     }
 
+    /**
+     * 消费循环：从 Redisson 阻塞队列 poll 消息，单条异常不影响后续消费，补偿逻辑在 Service 内处理。
+     */
     private void loop() {
         RBlockingQueue<SeckillRequest> queue =
                 redissonClient.getBlockingQueue(RedissonSeckillOrderProducer.QUEUE_KEY);
@@ -57,6 +63,9 @@ public class SeckillOrderConsumer {
         log.info("[seckill-consumer] stopped");
     }
 
+    /**
+     * 容器销毁前停止消费循环：翻转运行标志并中断工作线程。
+     */
     @PreDestroy
     public void stop() {
         running = false;

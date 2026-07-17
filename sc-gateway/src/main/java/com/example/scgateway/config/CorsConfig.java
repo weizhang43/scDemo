@@ -10,6 +10,9 @@ import org.springframework.web.util.pattern.PathPatternParser;
 @Configuration
 public class CorsConfig {
 
+    /**
+     * 创建响应式跨域过滤器，放行所有来源/方法/请求头，允许携带 Cookie，预检缓存 1 小时。
+     */
     @Bean
     public CorsWebFilter corsWebFilter() {
         CorsConfiguration config = new CorsConfiguration();

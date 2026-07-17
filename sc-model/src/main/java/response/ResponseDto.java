@@ -14,6 +14,10 @@ public class ResponseDto<T> {
 
     private Object daoResult;
 
+    /**
+     * 成功返回列表结果，code=200。
+     * @param dataList 数据列表
+     */
     public static <T>ResponseDto<T> success(List<T> dataList){
         ResponseDto responseDto = new ResponseDto();
         responseDto.setCode(200);
@@ -21,6 +25,10 @@ public class ResponseDto<T> {
         return responseDto;
     }
 
+    /**
+     * 成功返回单个对象结果，code=200。
+     * @param daoResult 业务对象
+     */
     public static <T>ResponseDto<T> success(Object daoResult){
         ResponseDto responseDto = new ResponseDto();
         responseDto.setCode(200);

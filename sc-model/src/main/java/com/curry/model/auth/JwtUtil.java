@@ -26,12 +26,21 @@ public final class JwtUtil {
 
     private JwtUtil() {}
 
+    /**
+     * 设置 HS256 签名密钥，仅接受非空非空白字符串。生产环境应从配置中心读取并定期轮换。
+     */
     public static void setSecret(String s) {
         if (s != null && !s.trim().isEmpty()) {
             secret = s;
         }
     }
 
+    /**
+     * 根据登录用户信息生成 HS256 签名的 JWT，payload 含 uId/uName/realName/iat。
+     * @param user 登录用户上下文
+     * @return 三段式 JWT 字符串
+     * @throws IllegalStateException 生成或签名过程出错时抛出
+     */
     public static String generate(LoginUser user) {
         try {
             Map<String, Object> header = new HashMap<>();

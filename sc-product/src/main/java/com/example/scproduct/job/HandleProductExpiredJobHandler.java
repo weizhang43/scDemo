@@ -21,6 +21,9 @@ public class HandleProductExpiredJobHandler {
     @Autowired
     private ProductService productService;
 
+    /**
+     * XXL-Job 入口：扫描未过期商品并将已过期的标记为 is_expired=1。
+     */
     @XxlJob("handleProductExpiredJob")
     public void execute() {
         String now = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());

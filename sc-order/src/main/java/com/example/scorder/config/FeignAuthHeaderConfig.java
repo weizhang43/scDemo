@@ -17,6 +17,9 @@ import javax.servlet.http.HttpServletRequest;
 @Configuration
 public class FeignAuthHeaderConfig {
 
+    /**
+     * 创建 Feign 请求拦截器，从当前 Servlet 请求取出网关注入的鉴权头并复制到下游 Feign 调用。
+     */
     @Bean
     public RequestInterceptor requestInterceptor() {
         return template -> {
@@ -32,6 +35,9 @@ public class FeignAuthHeaderConfig {
         };
     }
 
+    /**
+     * 当原请求中存在指定头时，将其复制到 Feign 请求模板上。
+     */
     private void header(HttpServletRequest request, String name, RequestTemplate template) {
         String value = request.getHeader(name);
         if (value != null && !value.isEmpty()) {

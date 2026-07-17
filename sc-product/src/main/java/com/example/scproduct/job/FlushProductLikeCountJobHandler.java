@@ -19,6 +19,9 @@ public class FlushProductLikeCountJobHandler {
     @Autowired
     private ProductService productService;
 
+    /**
+     * XXL-Job 入口：触发将 Redis 缓存的点赞数批量幂等回写到 t_product。
+     */
     @XxlJob("flushProductLikeCountJob")
     public void execute() {
         long start = System.currentTimeMillis();

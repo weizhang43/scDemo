@@ -34,6 +34,9 @@ public class OrderController {
 
     @Autowired
     private OrderService orderService;
+    /**
+     * 演示接口：组装一个订单并通过 RestTemplate 直接拉取商品信息塞入 productList 后返回。
+     */
     @GetMapping("/getOrder/{id}")
     public Order getOrderInfo(@PathVariable("id") int id){
         Order order = new Order();
@@ -45,22 +48,35 @@ public class OrderController {
         return order;
     }
 
+    /**
+     * 调用 Service 创建订单（演示链路）。
+     */
     @PostMapping("/createOrder")
     public ResponseDto<Order> createOrder() {
         return orderService.addOrder();
     }
 
+    /**
+     * 按主键查询订单。
+     */
     @GetMapping("/{id}")
     public Order get(@PathVariable("id") Integer id) {
         return orderService.getById(id);
     }
 
+    /**
+     * 查询全部订单列表。
+     */
     @GetMapping("/list")
     public List<Order> list() {
         return orderService.list();
     }
 
 
+    /**
+     * 分页查询订单：支持关键字、订单号、创建时间区间过滤。
+     * 被 Sentinel 资源 order-queryOrder 限流，触发限流时走 queryOrderBlockHandler 返回兜底数据。
+     */
     @GetMapping("/queryOrder")
     @SentinelResource(value = "order-queryOrder",blockHandler = "queryOrderBlockHandler")
     public ResponseDto<Order> queryOrder(@RequestParam(value = "key", required = false) String key,
@@ -145,17 +161,26 @@ public class OrderController {
         return ResponseDto.success(orderService.seckillResult(uId, pId));
     }
 
+    /**
+     * 按订单主键更新订单信息。
+     */
     @PutMapping
     public boolean update(@RequestBody Order order) {
         return orderService.updateById(order);
     }
 
+    /**
+     * 更新订单状态（如待支付/已支付/已取消等流转）。
+     */
     @PostMapping("/updateStatus")
     public ResponseDto<Order> updateStatus(@RequestParam("id") Integer id,
                                            @RequestParam("orderStatus") Integer orderStatus) {
         return orderService.updateStatus(id, orderStatus);
     }
 
+    /**
+     * 按主键删除订单（逻辑/物理删除由 Service 决定）。
+     */
     @DeleteMapping("/{id}")
     public ResponseDto<Order> delete(@PathVariable("id") Integer id) {
         return orderService.removeOrder(id);

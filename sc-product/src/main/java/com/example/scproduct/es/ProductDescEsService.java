@@ -148,6 +148,9 @@ public class ProductDescEsService {
         return success;
     }
 
+    /**
+     * 将商品实体映射为 ES 文档，pId 转 Long，更新时间取当前时刻。
+     */
     private ProductDescDoc toDoc(Product p) {
         ProductDescDoc doc = new ProductDescDoc();
         doc.setPId(p.getPId() == null ? null : p.getPId().longValue());

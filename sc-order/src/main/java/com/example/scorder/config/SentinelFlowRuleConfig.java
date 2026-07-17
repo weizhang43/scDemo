@@ -15,6 +15,9 @@ import java.util.List;
 @Configuration
 public class SentinelFlowRuleConfig {
 
+    /**
+     * 容器初始化后加载 Sentinel 限流规则：对 order-queryOrder 资源设置 QPS=2 的限流，作为下单查询兜底保护。
+     */
     @PostConstruct
     public void initFlowRules() {
         List<FlowRule> rules = new ArrayList<>();

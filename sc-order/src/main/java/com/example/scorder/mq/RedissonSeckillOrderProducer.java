@@ -18,6 +18,9 @@ public class RedissonSeckillOrderProducer implements SeckillOrderProducer {
     @Autowired
     private RedissonClient redissonClient;
 
+    /**
+     * 将秒杀消息加入 Redisson 阻塞队列，多节点共享同一队列实现天然消息分发。
+     */
     @Override
     public void send(SeckillRequest message) {
         RBlockingQueue<SeckillRequest> queue = redissonClient.getBlockingQueue(QUEUE_KEY);

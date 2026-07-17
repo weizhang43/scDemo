@@ -18,6 +18,9 @@ public class LoginUser implements Serializable {
 
     private String realName;
 
+    /**
+     * 工厂方法：基于用户 ID、用户名、真实姓名构造登录用户上下文。
+     */
     public static LoginUser of(Integer uId, String uName, String realName) {
         LoginUser u = new LoginUser();
         u.uId = uId;
