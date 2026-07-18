@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS `t_product` (
   `is_expired` TINYINT DEFAULT 0 COMMENT '是否过期：0-未过期，1-已过期',
   `manufacturer` VARCHAR(128) DEFAULT NULL COMMENT '厂家名称',
   `like_count` INT NOT NULL DEFAULT 0 COMMENT '点赞数量',
+  `image_url` VARCHAR(512) DEFAULT NULL COMMENT '商品图片URL',
   PRIMARY KEY (`p_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='商品表';
 
@@ -19,6 +20,7 @@ CREATE TABLE IF NOT EXISTS `t_product` (
 -- ALTER TABLE `t_product` ADD COLUMN `is_expired` TINYINT DEFAULT 0 COMMENT '是否过期：0-未过期，1-已过期' AFTER `origin`;
 -- ALTER TABLE `t_product` ADD COLUMN `manufacturer` VARCHAR(128) DEFAULT NULL COMMENT '厂家名称' AFTER `is_expired`;
 -- ALTER TABLE `t_product` ADD COLUMN `like_count` INT NOT NULL DEFAULT 0 COMMENT '点赞数量' AFTER `manufacturer`;
+-- ALTER TABLE `t_product` ADD COLUMN `image_url` VARCHAR(512) DEFAULT NULL COMMENT '商品图片URL' AFTER `like_count`;
 
 -- 商品描述大字段 + 增量同步时间戳（ES 索引同步用）
 -- ALTER TABLE `t_product` ADD COLUMN `pro_desc` TEXT DEFAULT NULL COMMENT '商品描述' AFTER `manufacturer`;

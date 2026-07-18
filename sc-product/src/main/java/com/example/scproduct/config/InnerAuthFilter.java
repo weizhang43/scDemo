@@ -25,18 +25,22 @@ public class InnerAuthFilter extends OncePerRequestFilter {
     };
 
     /**
-     * 内部鉴权过滤：actuator 路径放行；其它路径要求请求头携带网关注入的 X-User-Id，缺失则直接返回 401。
+     * 内部鉴权过滤：actuator 与商品图片查看（GET /product/image/{fileName}）放行；
+     * 其它路径要求请求头携带网关注入的 X-User-Id，缺失则直接返回 401。
+     * 用 contains 匹配以兼容 context-path 前缀差异。
      */
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain chain) throws ServletException, IOException {
         String path = request.getRequestURI();
-        for (String p : IGNORE_PATHS) {
-            if (path.startsWith(p)) {
-                chain.doFilter(request, response);
-                return;
-            }
+        String method = request.getMethod();
+        boolean isActuator = path.contains("/actuator");
+        boolean isImageGet = "GET".equalsIgnoreCase(method)
+                && path.contains("/product/image/");
+        if (isActuator || isImageGet) {
+            chain.doFilter(request, response);
+            return;
         }
         String userId = request.getHeader(AuthConstant.HEADER_X_USER_ID);
         if (userId == null || userId.isEmpty()) {

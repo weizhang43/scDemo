@@ -62,11 +62,14 @@ product:
     sync-page-size: 500
   export:
     # 导出文件存放目录
-    dir: ./export-files
+    dir: D:/code/project/my-project/scDemo/sc-product/export-files
     # 单次导出最大行数
     max-rows: 100000
     # 分页查询每页大小
     page-size: 1000
+  image:
+    # 商品图片上传存放目录（必须使用绝对路径，避免 Tomcat 临时工作目录解析问题）
+    dir: D:/code/project/my-project/scDemo/sc-product/product-images
 
 # xxl-job
 xxl:
@@ -81,7 +84,7 @@ xxl:
       address:
       ip:
       port: 9999
-      logpath: ./xxl-job/jobhandler
+      logpath: D:/code/project/my-project/scDemo/sc-product/xxl-job/jobhandler
       logretentiondays: 30
 
 # Redisson

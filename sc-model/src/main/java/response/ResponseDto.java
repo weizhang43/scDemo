@@ -15,6 +15,11 @@ public class ResponseDto<T> {
     private Object daoResult;
 
     /**
+     * 请求成功状态码
+     */
+    public static final Integer SUCCESS_CODE = 200;
+
+    /**
      * 成功返回列表结果，code=200。
      * @param dataList 数据列表
      */

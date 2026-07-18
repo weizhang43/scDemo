@@ -53,4 +53,8 @@ public class Product {
     @JsonProperty("likeCount")
     @TableField("like_count")
     private Integer likeCount;
+
+    @JsonProperty("imageUrl")
+    @TableField("image_url")
+    private String imageUrl;
 }

@@ -82,6 +82,18 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
             }
         }
 
+        // 图片查看（<img src> 无法携带 token）：对 /product/image/{fileName} 且扩展名为图片的 GET 请求放行
+        String method = request.getMethod() == null ? "GET" : request.getMethod().name();
+        if (path.startsWith("/product/image/")) {
+            String fileName = path.substring("/product/image/".length());
+            boolean isImage = fileName.indexOf('/') < 0
+                    && fileName.toLowerCase().matches(".*\\.(png|jpg|jpeg|gif|webp)$");
+            log.info("[AuthFilter] 图片路径检查 method={}, fileName={}, isImage={}", method, fileName, isImage);
+            if ("GET".equalsIgnoreCase(method) && isImage) {
+                return chain.filter(exchange);
+            }
+        }
+
         String auth = request.getHeaders().getFirst(AuthConstant.HEADER_AUTHORIZATION);
         if (auth == null || !auth.startsWith(AuthConstant.BEARER_PREFIX)) {
             return unauthorized(exchange, "未登录或 token 缺失");
@@ -104,7 +116,8 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
                     log.info("[AuthFilter] 命中 Redis, key={}, raw={}", redisKey, abbreviate(raw));
                     Map<String, Object> data = parseMap(raw);
                     if (data == null || data.get("uId") == null) {
-                        return unauthorizedMono(exchange, "登录态已失效 (raw=" + abbreviate(raw) + ")");
+                        log.warn("[AuthFilter] 登录态失效: Redis raw 异常或缺失 uId, key={}, raw={}", redisKey, abbreviate(raw));
+                        return unauthorizedMono(exchange, "登录状态异常，请重新登录");
                     }
                     String uIdStr = String.valueOf(data.get("uId"));
                     String uName = data.get("uName") == null ? "" : String.valueOf(data.get("uName"));
@@ -120,7 +133,10 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
                                     Duration.ofSeconds(AuthConstant.DEFAULT_TTL_SECONDS))
                             .then(chain.filter(mutatedExchange));
                 })
-                .switchIfEmpty(unauthorizedMono(exchange, "登录已过期 Redis key 不存在 key=" + redisKey));
+                .switchIfEmpty(Mono.defer(() -> {
+                    log.warn("[AuthFilter] 登录态失效: Redis 中未找到 key={}", redisKey);
+                    return unauthorizedMono(exchange, "登录已过期，请重新登录");
+                }));
     }
 
     /**
@@ -134,7 +150,7 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
         try {
             return objectMapper.readValue(raw, new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
-            // 解析失败也返回 null，让上层报"已失效"并把 raw 暴露到消息中方便排查
+            // 解析失败返回 null，由调用方按"登录态失效"处理，raw 仅写入日志用于排查
             return null;
         }
     }
@@ -163,11 +179,20 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
 
     /**
      * 实际写出 401 响应：设置状态码与 JSON 内容类型，输出统一的 {code,msg} 结构。
+     * 响应已提交（如异常处理链路已写出部分内容）时不再改 header，仅记日志，避免 ReadOnlyHttpHeaders 异常。
      */
     private Mono<Void> writeUnauthorized(ServerWebExchange exchange, String msg) {
         ServerHttpResponse response = exchange.getResponse();
-        response.setStatusCode(HttpStatus.UNAUTHORIZED);
-        response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
+        if (response.isCommitted()) {
+            log.warn("[AuthFilter] 响应已提交，跳过 401 写出: {}", msg);
+            return Mono.empty();
+        }
+        try {
+            response.setStatusCode(HttpStatus.UNAUTHORIZED);
+            response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
+        } catch (Exception e) {
+            log.warn("[AuthFilter] 设置响应头失败，仍尝试写出 body: {}", e.getMessage());
+        }
         String body = "{\"code\":401,\"msg\":\"" + msg.replace("\"", "'") + "\"}";
         DataBuffer buffer = response.bufferFactory()
                 .wrap(body.getBytes(StandardCharsets.UTF_8));

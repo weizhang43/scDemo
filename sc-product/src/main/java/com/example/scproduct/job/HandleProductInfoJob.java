@@ -3,27 +3,36 @@ package com.example.scproduct.job;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.curry.model.Product;
+import com.example.scproduct.controller.FileController;
 import com.example.scproduct.es.ProductDescEsService;
 import com.example.scproduct.mapper.ProductMapper;
 import com.example.scproduct.service.ProductService;
 import com.xxl.job.core.handler.annotation.XxlJob;
 import io.seata.common.util.CollectionUtils;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.io.FileUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.util.UriComponentsBuilder;
+import response.ResponseDto;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+
+import static response.ResponseDto.SUCCESS_CODE;
 
 /**
  * 商品描述 AI 填充 + ES 同步任务。
@@ -33,7 +42,7 @@ import java.util.concurrent.TimeUnit;
  */
 @Slf4j
 @Component
-public class HandleProDescJob {
+public class HandleProductInfoJob {
 
     @Autowired
     private RestTemplate restTemplate;
@@ -56,6 +65,11 @@ public class HandleProDescJob {
     private static final int PAGE_SIZE = 100;
     private static final int CONCURRENCY = 8;
     private static final long AWAIT_TIMEOUT_MINUTES = 5;
+
+    private static final String IMG_DIR_PATH = "D:\\code\\project\\photo";
+
+    @Autowired
+    private FileController fileController;
 
     /**
      * XXL-Job 入口：游标分页扫表，固定线程池并发为商品补 proDesc，写回 MySQL 并同步到 ES。
@@ -187,5 +201,66 @@ public class HandleProDescJob {
             log.error("[handleProDescJob] fillProDesc fail, pId={}, name={}",
                     product.getPId(), product.getPName(), e);
         }
+    }
+
+    @XxlJob("dealProductImage")
+    private void dealProductImage(){
+        long startTimes = System.currentTimeMillis();
+        int pageNo = 1;
+        List<File> fileList = getFileList();
+        while(true){
+            LambdaQueryWrapper<Product> lambdaQueryWrapper = new LambdaQueryWrapper<Product>().
+                    isNull(Product::getImageUrl).orderByDesc(Product::getPId);
+            Page<Product> productPage = new Page<>(pageNo,syncPageSize);
+            productPage = productMapper.selectPage(productPage,lambdaQueryWrapper);
+            List<Product> productList = productPage.getRecords();
+            if(CollectionUtils.isEmpty(productList)){
+                break;
+            }
+            for(Product product : productList){
+                ResponseDto<String> responseDto = fileController.upload(convert(fileList));
+                if(responseDto.getDaoResult() != null){
+                    product.setImageUrl(responseDto.getDaoResult().toString());
+                    productMapper.updateById(product);
+                }
+            }
+            log.info("程序执行结束，共耗时:{}",System.currentTimeMillis()-startTimes);
+        }
+
+
+    }
+
+
+    /**
+     * file转mutipartFile
+     * @param fileList
+     * @return
+     * @throws IOException
+     */
+    public static MultipartFile convert(List<File> fileList) {
+        Random rand = new Random();
+        int randomNumber = rand.nextInt(fileList.size());
+        File file = fileList.get(randomNumber);
+        // 使用 try-with-resources 确保文件流被正确关闭
+        try (FileInputStream input = new FileInputStream(file)) {
+            return new MockMultipartFile(
+                    "file",             // 表单中的字段名，可自定义
+                    file.getName(),          // 原始文件名
+                    null,                    // 内容类型，传null让Spring自动判断
+                    input                    // 文件的输入流
+            );
+        }catch (Exception e){
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+    /**
+     * 获取文件夹下所有的附件
+     * @return
+     */
+    private List<File> getFileList(){
+        Collection<File> files = FileUtils.listFiles(new File(IMG_DIR_PATH), null, true);
+        return new ArrayList<>(files);
     }
 }
