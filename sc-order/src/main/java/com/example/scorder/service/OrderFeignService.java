@@ -62,4 +62,13 @@ public interface OrderFeignService {
     @PostMapping("/product/seckill/rollback")
     ResponseDto<Product> rollbackSeckillStock(@RequestParam("pId") Integer pId,
                                               @RequestParam("uId") Integer uId);
+
+
+    /**
+     * 取消订单，添加原商品库存
+     * @param products
+     * @return
+     */
+    @PostMapping("/product/addStock")
+    ResponseDto<Product> addStock(@RequestBody List<Product> products);
 }

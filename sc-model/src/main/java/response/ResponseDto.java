@@ -1,5 +1,6 @@
 package response;
 
+import com.curry.model.Product;
 import lombok.Data;
 
 import java.util.List;

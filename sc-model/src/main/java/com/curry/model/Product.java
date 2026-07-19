@@ -57,4 +57,13 @@ public class Product {
     @JsonProperty("imageUrl")
     @TableField("image_url")
     private String imageUrl;
+
+    public Product(){
+
+    }
+
+    public Product(Integer pId,Integer stock){
+        this.pId = pId;
+        this.stock = stock;
+    }
 }

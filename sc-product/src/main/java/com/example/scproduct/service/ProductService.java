@@ -112,6 +112,13 @@ public interface ProductService extends IService<Product> {
                       ProgressCallback progressCallback,
                       CancelChecker cancelChecker) throws Exception;
 
+    /**
+     * 添加库存
+     * @param products
+     * @return
+     */
+    ResponseDto<Product> addStock(List<Product> products);
+
     /** 流式导出查询条件 */
     class ProductExportQuery {
         private final String pName;

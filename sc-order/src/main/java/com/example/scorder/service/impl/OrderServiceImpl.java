@@ -21,6 +21,7 @@ import com.example.scorder.vo.OrderExportVO;
 import com.example.scorder.vo.SeckillResultVO;
 import io.seata.spring.annotation.GlobalTransactional;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.compress.utils.Lists;
 import org.redisson.api.RBucket;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
@@ -38,6 +39,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+
+import static response.ResponseDto.SUCCESS_CODE;
 
 @Service
 @Slf4j
@@ -63,6 +66,11 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
     /** 秒杀结果 key 前缀：seckill:result:{uId}:{pId} */
     private static final String SECKILL_RESULT_KEY = "seckill:result:";
+
+    /**
+     * 订单取消状态码
+     */
+    private static final Integer CANCEL_ORDER_STATUS = 0;
 
     /**
      * 演示链路：本地创建订单 + Feign 远程创建商品，外加一次 1/0 异常。
@@ -93,14 +101,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     @Override
     public ResponseDto<Order> queryOrder(String key, String orderNo, Date createTimeStart, Date createTimeEnd, int pageNo, int pageSize) {
         Page<Order> page = new Page<>(pageNo, pageSize);
-        LambdaQueryWrapper<Order> queryWrapper = new LambdaQueryWrapper<Order>()
-                .like(key != null && !key.isEmpty(), Order::getAddPerson, key)
-                .like(orderNo != null && !orderNo.isEmpty(), Order::getOrderNo, orderNo)
-                .ge(createTimeStart != null, Order::getCreateTime, createTimeStart)
-                .le(createTimeEnd != null, Order::getCreateTime, createTimeEnd)
-                .orderByDesc(Order::getCreateTime)
-                .orderByDesc(Order::getOId);
-        page = orderMapper.selectPage(page, queryWrapper);
+        orderMapper.selectPageWithUserName(page, key, orderNo, createTimeStart, createTimeEnd);
         return ResponseDto.success(page);
     }
 
@@ -330,6 +331,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
      * 校验订单状态合法后按主键更新状态。状态枚举：0 取消 / 1 已下单 / 2 已完成。
      */
     @Override
+    @GlobalTransactional
     public ResponseDto<Order> updateStatus(Integer id, Integer orderStatus) {
         if (id == null) {
             return ResponseDto.error("订单ID不能为空");
@@ -345,6 +347,22 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         update.setOId(id);
         update.setOrderStatus(orderStatus);
         int rows = orderMapper.updateById(update);
+        if(CANCEL_ORDER_STATUS.equals(orderStatus)){
+            //订单取消，恢复商品库存
+            List<OrderItem> orderItemList = orderItemMapper.selectList(
+                    new LambdaQueryWrapper<OrderItem>().eq(OrderItem::getOId,id)
+            );
+            List<Product> productList = Lists.newArrayList();
+            orderItemList.forEach(orderItem -> {
+                productList.add(new Product(orderItem.getPId(),orderItem.getQuantity()));
+            });
+            ResponseDto<Product> responseDto =orderFeignService.addStock(productList);
+            if(SUCCESS_CODE.equals(responseDto.getCode())){
+                orderItemMapper.delete(new LambdaQueryWrapper<OrderItem>().eq(OrderItem::getOId,id));
+            }else{
+                throw new RuntimeException(responseDto.getMsg());
+            }
+        }
         return rows > 0 ? ResponseDto.success(null) : ResponseDto.error("更新订单状态失败");
     }
 

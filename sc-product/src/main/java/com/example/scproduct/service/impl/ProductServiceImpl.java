@@ -541,6 +541,12 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
         return processed;
     }
 
+    @Override
+    public ResponseDto<Product> addStock(List<Product> products) {
+        productMapper.batchUpdateStock(products);
+        return ResponseDto.success(null);
+    }
+
     private LambdaQueryWrapper<Product> buildExportWrapper(ProductExportQuery q) {
         return buildListWrapper(q.getpName(), q.getProDesc(), q.getProductionDateStart(),
                 q.getProductionDateEnd(), q.getOrigin(), q.getIsExpired());

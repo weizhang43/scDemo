@@ -181,6 +181,19 @@ public class ProductController {
     }
 
     /**
+     * 添加库存
+     */
+    @PostMapping("/addStock")
+    public ResponseDto<Product> addStock(@RequestBody List<Product> products) {
+        try{
+            return productService.addStock(products);
+        }catch (Exception e){
+            return ResponseDto.error("修改库存失败");
+        }
+
+    }
+
+    /**
      * 批量下单：校验+原子扣减库存（库存不足全部回滚）
      */
     @PostMapping("/checkAndDeductStock")
@@ -260,4 +273,5 @@ public class ProductController {
             response.getWriter().write("{\"code\":500,\"msg\":\"文件不存在或任务未完成\"}");
         }
     }
+
 }
