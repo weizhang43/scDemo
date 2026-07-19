@@ -70,6 +70,8 @@ product:
   image:
     # 商品图片上传存放目录（必须使用绝对路径，避免 Tomcat 临时工作目录解析问题）
     dir: D:/code/project/my-project/scDemo/sc-product/product-images
+    # 商品图片批量补图任务（dealProductImage）的源图片目录
+    source-dir: D:/code/project/photo
 
 # xxl-job
 xxl:

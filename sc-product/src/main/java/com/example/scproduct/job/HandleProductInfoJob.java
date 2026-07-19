@@ -21,7 +21,6 @@ import org.springframework.web.util.UriComponentsBuilder;
 import response.ResponseDto;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
@@ -30,7 +29,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 import static response.ResponseDto.SUCCESS_CODE;
 
@@ -66,7 +64,8 @@ public class HandleProductInfoJob {
     private static final int CONCURRENCY = 8;
     private static final long AWAIT_TIMEOUT_MINUTES = 5;
 
-    private static final String IMG_DIR_PATH = "D:\\code\\project\\photo";
+    @Value("${product.image.source-dir:D:/code/project/photo}")
+    private String imageSourceDir;
 
     @Autowired
     private FileController fileController;
@@ -204,55 +203,127 @@ public class HandleProductInfoJob {
     }
 
     @XxlJob("dealProductImage")
-    private void dealProductImage(){
-        long startTimes = System.currentTimeMillis();
-        int pageNo = 1;
+    public void dealProductImage() {
+        long start = System.currentTimeMillis();
+        log.info("[dealProductImage] start");
+
         List<File> fileList = getFileList();
-        while(true){
-            LambdaQueryWrapper<Product> lambdaQueryWrapper = new LambdaQueryWrapper<Product>().
-                    isNull(Product::getImageUrl).orderByDesc(Product::getPId);
-            Page<Product> productPage = new Page<>(pageNo,syncPageSize);
-            productPage = productMapper.selectPage(productPage,lambdaQueryWrapper);
-            List<Product> productList = productPage.getRecords();
-            if(CollectionUtils.isEmpty(productList)){
-                break;
-            }
-            for(Product product : productList){
-                ResponseDto<String> responseDto = fileController.upload(convert(fileList));
-                if(responseDto.getDaoResult() != null){
-                    product.setImageUrl(responseDto.getDaoResult().toString());
-                    productMapper.updateById(product);
+        if (fileList.isEmpty()) {
+            log.warn("[dealProductImage] image source dir empty, skip. dir={}", imageSourceDir);
+            return;
+        }
+        // 预读全部图片字节缓存到内存，避免每次上传都重新读盘
+        List<MultipartFile> mockFiles = loadMockFiles(fileList);
+        if (mockFiles.isEmpty()) {
+            log.warn("[dealProductImage] no readable image, skip. dir={}", imageSourceDir);
+            return;
+        }
+
+        long total = productMapper.selectCount(new LambdaQueryWrapper<Product>()
+                .isNull(Product::getImageUrl));
+        long updated = 0;
+        long failed = 0;
+        Integer lastPId = null;
+        Random rand = new Random();
+        ExecutorService executor = Executors.newFixedThreadPool(CONCURRENCY);
+
+        try {
+            while (true) {
+                LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<Product>()
+                        .isNull(Product::getImageUrl)
+                        .orderByDesc(Product::getPId)
+                        .last("LIMIT " + syncPageSize);
+                if (lastPId != null) {
+                    wrapper.lt(Product::getPId, lastPId);
+                }
+                List<Product> page = productMapper.selectList(wrapper);
+                if (CollectionUtils.isEmpty(page)) {
+                    break;
+                }
+
+                List<CompletableFuture<Boolean>> futures = new ArrayList<>(page.size());
+                for (Product product : page) {
+                    futures.add(CompletableFuture.supplyAsync(() -> uploadAndBind(product, mockFiles, rand), executor));
+                }
+
+                int batchUpdated = 0;
+                int batchFailed = 0;
+                List<Product> changed = new ArrayList<>(page.size());
+                for (int i = 0; i < futures.size(); i++) {
+                    try {
+                        if (Boolean.TRUE.equals(futures.get(i).get(AWAIT_TIMEOUT_MINUTES, TimeUnit.MINUTES))) {
+                            changed.add(page.get(i));
+                            batchUpdated++;
+                        } else {
+                            batchFailed++;
+                        }
+                    } catch (Exception e) {
+                        batchFailed++;
+                        log.error("[dealProductImage] task fail, pId={}", page.get(i).getPId(), e);
+                    }
+                }
+
+                if (!changed.isEmpty()) {
+                    productService.updateBatchById(changed);
+                }
+                updated += batchUpdated;
+                failed += batchFailed;
+
+                // 关键：游标必须推进，无论本批是否有失败，否则失败的行永远卡在第 1 页
+                lastPId = page.get(page.size() - 1).getPId();
+                if (page.size() < syncPageSize) {
+                    break;
                 }
             }
-            log.info("程序执行结束，共耗时:{}",System.currentTimeMillis()-startTimes);
+
+            log.info("[dealProductImage] finish, pending={}, updated={}, failed={}, costMs={}",
+                    total, updated, failed, System.currentTimeMillis() - start);
+        } catch (Exception e) {
+            log.error("[dealProductImage] error, updated={}, failed={}", updated, failed, e);
+            throw new RuntimeException(e);
+        } finally {
+            executor.shutdown();
         }
-
-
     }
 
+    /**
+     * 随机选一张图上传，写回 product.imageUrl。
+     * 返回 true 表示成功；返回 false 表示跳过（图片读取失败/上传接口返回非 200）。
+     */
+    private boolean uploadAndBind(Product product, List<MultipartFile> mockFiles, Random rand) {
+        try {
+            MultipartFile file = mockFiles.get(rand.nextInt(mockFiles.size()));
+            ResponseDto<String> resp = fileController.upload(file);
+            if (resp != null && SUCCESS_CODE.equals(resp.getCode()) && resp.getDaoResult() != null) {
+                product.setImageUrl(String.valueOf(resp.getDaoResult()));
+                return true;
+            }
+            log.warn("[dealProductImage] upload resp invalid, pId={}, resp={}", product.getPId(), resp);
+        } catch (Exception e) {
+            log.error("[dealProductImage] upload fail, pId={}", product.getPId(), e);
+        }
+        return false;
+    }
 
     /**
-     * file转mutipartFile
-     * @param fileList
-     * @return
-     * @throws IOException
+     * 把目录下的所有图片一次性加载为 MockMultipartFile，避免反复读盘。
+     * 仅保留常见图片扩展名，跳过非图片/不可读文件。
      */
-    public static MultipartFile convert(List<File> fileList) {
-        Random rand = new Random();
-        int randomNumber = rand.nextInt(fileList.size());
-        File file = fileList.get(randomNumber);
-        // 使用 try-with-resources 确保文件流被正确关闭
-        try (FileInputStream input = new FileInputStream(file)) {
-            return new MockMultipartFile(
-                    "file",             // 表单中的字段名，可自定义
-                    file.getName(),          // 原始文件名
-                    null,                    // 内容类型，传null让Spring自动判断
-                    input                    // 文件的输入流
-            );
-        }catch (Exception e){
-            e.printStackTrace();
+    private List<MultipartFile> loadMockFiles(List<File> files) {
+        List<MultipartFile> result = new ArrayList<>(files.size());
+        for (File file : files) {
+            String name = file.getName().toLowerCase();
+            if (!name.matches(".*\\.(png|jpg|jpeg|gif|webp)")) {
+                continue;
+            }
+            try {
+                byte[] bytes = FileUtils.readFileToByteArray(file);
+                result.add(new MockMultipartFile("file", file.getName(), null, bytes));
+            } catch (IOException e) {
+                log.warn("[dealProductImage] skip unreadable file: {}", file.getAbsolutePath(), e);
+            }
         }
-        return null;
+        return result;
     }
 
     /**
@@ -260,7 +331,7 @@ public class HandleProductInfoJob {
      * @return
      */
     private List<File> getFileList(){
-        Collection<File> files = FileUtils.listFiles(new File(IMG_DIR_PATH), null, true);
+        Collection<File> files = FileUtils.listFiles(new File(imageSourceDir), null, true);
         return new ArrayList<>(files);
     }
 }
