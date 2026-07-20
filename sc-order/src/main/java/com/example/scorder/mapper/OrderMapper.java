@@ -6,6 +6,7 @@ import com.curry.model.Order;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface OrderMapper extends BaseMapper<Order> {
@@ -15,6 +16,17 @@ public interface OrderMapper extends BaseMapper<Order> {
      */
     @Select("SELECT COUNT(*) FROM t_order WHERE order_no LIKE CONCAT('ORD', #{dayPrefix}, '%')")
     int countByDay(@Param("dayPrefix") String dayPrefix);
+
+    /**
+     * 基于 version + 前置 order_status 的 CAS 更新。
+     * rows==0 表示状态已被其他请求变更或 version 不匹配，调用方据此做幂等返回。
+     */
+    @Update("UPDATE t_order SET order_status=#{targetStatus}, version=version+1, update_time=NOW() " +
+            "WHERE o_id=#{id} AND order_status=#{expectStatus} AND version=#{version}")
+    int casUpdateStatus(@Param("id") Integer id,
+                        @Param("expectStatus") Integer expectStatus,
+                        @Param("targetStatus") Integer targetStatus,
+                        @Param("version") Integer version);
 
     /**
      * 联表分页查询：用 t_user.u_name 替换 t_order.add_person（add_person 实际存的是 uId）。

@@ -21,3 +21,7 @@ ALTER TABLE `t_order`
   ADD COLUMN `order_no` VARCHAR(32) NOT NULL DEFAULT '' COMMENT '订单编号' AFTER `o_id`;
 UPDATE `t_order` SET `order_no` = CONCAT('ORD', DATE_FORMAT(NOW(),'%Y%m%d'), LPAD(o_id, 8, '0')) WHERE `order_no` = '';
 ALTER TABLE `t_order` ADD UNIQUE INDEX `uk_order_no` (`order_no`);
+
+ALTER TABLE `t_order`
+  ADD COLUMN `version` INT NOT NULL DEFAULT 0 COMMENT '乐观锁版本号',
+  ADD COLUMN `update_time` DATETIME NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间';

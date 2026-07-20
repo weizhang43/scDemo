@@ -11,8 +11,10 @@ import com.curry.model.OrderItem;
 import com.curry.model.Product;
 import com.example.scorder.dto.PlaceOrderRequest;
 import com.example.scorder.dto.SeckillRequest;
+import com.example.scorder.entity.OrderStockRestoreMsg;
 import com.example.scorder.mapper.OrderItemMapper;
 import com.example.scorder.mapper.OrderMapper;
+import com.example.scorder.mapper.OrderStockRestoreMsgMapper;
 import com.example.scorder.mq.SeckillOrderProducer;
 import com.example.scorder.service.OrderFeignService;
 import com.example.scorder.service.OrderService;
@@ -27,6 +29,7 @@ import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import response.ResponseDto;
 
 import javax.servlet.http.HttpServletResponse;
@@ -64,6 +67,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     @Autowired
     private SeckillOrderProducer seckillOrderProducer;
 
+    @Autowired
+    private OrderStockRestoreMsgMapper orderStockRestoreMsgMapper;
+
     /** 秒杀结果 key 前缀：seckill:result:{uId}:{pId} */
     private static final String SECKILL_RESULT_KEY = "seckill:result:";
 
@@ -71,6 +77,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
      * 订单取消状态码
      */
     private static final Integer CANCEL_ORDER_STATUS = 0;
+
+    /** 已下单状态码 */
+    private static final Integer PLACED_ORDER_STATUS = 1;
 
     /**
      * 演示链路：本地创建订单 + Feign 远程创建商品，外加一次 1/0 异常。
@@ -328,10 +337,13 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     }
 
     /**
-     * 校验订单状态合法后按主键更新状态。状态枚举：0 取消 / 1 已下单 / 2 已完成。
+     * 校验订单状态合法后基于 version CAS 更新状态。状态枚举：0 取消 / 1 已下单 / 2 已完成。
+     * 状态机：仅允许 1 已下单 → 0 取消、1 已下单 → 2 已完成。
+     * 取消分支不再同步调用 addStock，而是写入本地消息表 t_order_stock_restore_msg，
+     * 由 StockRestoreMsgConsumer 异步消费回库存，避免 @GlobalTransactional 跨服务锁。
      */
     @Override
-    @GlobalTransactional
+    @Transactional(rollbackFor = Exception.class)
     public ResponseDto<Order> updateStatus(Integer id, Integer orderStatus) {
         if (id == null) {
             return ResponseDto.error("订单ID不能为空");
@@ -343,27 +355,37 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         if (exists == null) {
             return ResponseDto.error("订单不存在");
         }
-        Order update = new Order();
-        update.setOId(id);
-        update.setOrderStatus(orderStatus);
-        int rows = orderMapper.updateById(update);
-        if(CANCEL_ORDER_STATUS.equals(orderStatus)){
-            //订单取消，恢复商品库存
-            List<OrderItem> orderItemList = orderItemMapper.selectList(
-                    new LambdaQueryWrapper<OrderItem>().eq(OrderItem::getOId,id)
-            );
-            List<Product> productList = Lists.newArrayList();
-            orderItemList.forEach(orderItem -> {
-                productList.add(new Product(orderItem.getPId(),orderItem.getQuantity()));
-            });
-            ResponseDto<Product> responseDto =orderFeignService.addStock(productList);
-            if(SUCCESS_CODE.equals(responseDto.getCode())){
-                orderItemMapper.delete(new LambdaQueryWrapper<OrderItem>().eq(OrderItem::getOId,id));
-            }else{
-                throw new RuntimeException(responseDto.getMsg());
+        Integer currentStatus = exists.getOrderStatus();
+        // 状态机校验：只有「已下单」能流转到「取消」或「已完成」
+        if (!Objects.equals(currentStatus, PLACED_ORDER_STATUS)) {
+            // 已经是目标状态则视为幂等成功
+            if (Objects.equals(currentStatus, orderStatus)) {
+                return ResponseDto.success(null);
+            }
+            return ResponseDto.error("当前订单状态不允许该操作");
+        }
+        // CAS 更新：version + 前置状态双重校验，并发下只有一个请求成功
+        int rows = orderMapper.casUpdateStatus(id, currentStatus, orderStatus, exists.getVersion());
+        if (rows == 0) {
+            // 被其他请求抢先变更；幂等返回，不抛错以免前端误重试放大流量
+            return ResponseDto.error("订单状态已变更，请刷新后重试");
+        }
+        if (CANCEL_ORDER_STATUS.equals(orderStatus)) {
+            // 同事务写入本地消息表，异步回库存；uk_o_id 唯一索引兜底重复取消
+            OrderStockRestoreMsg msg = new OrderStockRestoreMsg();
+            msg.setOId(id);
+            msg.setStatus(0);
+            msg.setRetryCnt(0);
+            msg.setMaxRetry(5);
+            msg.setNextRetry(new Date());
+            try {
+                orderStockRestoreMsgMapper.insert(msg);
+            } catch (org.springframework.dao.DuplicateKeyException dupEx) {
+                // 消息已存在，说明已有取消任务在途，无需重复写
+                log.info("订单 {} 回库存消息已存在，跳过写入", id);
             }
         }
-        return rows > 0 ? ResponseDto.success(null) : ResponseDto.error("更新订单状态失败");
+        return ResponseDto.success(null);
     }
 
     /**

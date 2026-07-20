@@ -11,8 +11,10 @@ import com.example.scorder.dto.SeckillRequest;
 import com.example.scorder.service.OrderService;
 import com.example.scorder.vo.SeckillResultVO;
 import com.google.common.collect.Lists;
+import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
 import response.ResponseDto;
@@ -22,6 +24,7 @@ import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 @RestController
 @RequestMapping(value = "/order")
@@ -34,6 +37,13 @@ public class OrderController {
 
     @Autowired
     private OrderService orderService;
+
+    @Autowired
+    private RedissonClient redissonClient;
+
+    /** requestId 幂等键 TTL */
+    private static final long IDEM_TTL_SECONDS = 30;
+
     /**
      * 演示接口：组装一个订单并通过 RestTemplate 直接拉取商品信息塞入 productList 后返回。
      */
@@ -171,10 +181,19 @@ public class OrderController {
 
     /**
      * 更新订单状态（如待支付/已支付/已取消等流转）。
+     * requestId 可选：前端传则用 Redis SETNX 做幂等去重，30s 内同 requestId 视为重复提交。
      */
     @PostMapping("/updateStatus")
     public ResponseDto<Order> updateStatus(@RequestParam("id") Integer id,
-                                           @RequestParam("orderStatus") Integer orderStatus) {
+                                           @RequestParam("orderStatus") Integer orderStatus,
+                                           @RequestParam(value = "requestId", required = false) String requestId) {
+        if (StringUtils.hasText(requestId)) {
+            String key = "idem:updateStatus:" + requestId;
+            boolean ok = redissonClient.getBucket(key).trySet("1", IDEM_TTL_SECONDS, TimeUnit.SECONDS);
+            if (!ok) {
+                return ResponseDto.error("请求正在处理，请勿重复提交");
+            }
+        }
         return orderService.updateStatus(id, orderStatus);
     }
 
