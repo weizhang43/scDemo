@@ -1,10 +1,14 @@
 package com.example.scorder.service;
 
 import com.curry.model.Address;
+import com.curry.model.OrderMessage;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.stereotype.Component;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import response.ResponseDto;
 
 @Component
@@ -17,4 +21,8 @@ public interface UserFeignService {
      */
     @GetMapping("/user/address/{aId}")
     ResponseDto<Address> getAddress(@PathVariable("aId") Integer aId);
+
+
+    @PostMapping("/user/mail/sendMail")
+    ResponseDto sendMail(@RequestBody @Validated OrderMessage orderMessage);
 }

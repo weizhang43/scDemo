@@ -1,7 +1,11 @@
 package com.example.scorder.mq;
 
+import com.curry.model.OrderMessage;
 import com.example.scorder.config.RabbitMqConfig;
+import com.example.scorder.service.UserFeignService;
+import groovy.beans.ListenerList;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -17,18 +21,16 @@ public class OrderMqConsumer {
     @Autowired
     private RabbitTemplate rabbitTemplate;
 
+    @Autowired
+    private UserFeignService userFeignService;
+
     /**
      * 从订单队列拉取一条消息（最多等待 3 秒）。
      * @return 消息内容；超时仍无消息时返回 null
      */
-    public String receiveOrder() {
-        Object msg = rabbitTemplate.receiveAndConvert(RabbitMqConfig.QUEUE_ORDER, 3000);
-        if (msg == null) {
-            log.info("[order-mq] 队列为空，无消息可消费");
-            return null;
-        }
-        String message = msg.toString();
-        log.info("[order-mq] 消费订单消息: {}", message);
-        return message;
+    @RabbitListener(queues = RabbitMqConfig.QUEUE_EMAIL)
+    public void receiveOrder(OrderMessage orderMessage) {
+        userFeignService.sendMail(orderMessage);
+        log.info("邮件发送成功");
     }
 }

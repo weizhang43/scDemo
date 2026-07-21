@@ -22,8 +22,8 @@ public class RabbitMqTest {
      */
     @Test
     public void testSendThenConsume() {
-        String received = orderMqConsumer.receiveOrder();
-        System.out.println("=========="+received);
+        /*String received = orderMqConsumer.receiveOrder();
+        System.out.println("=========="+received);*/
     }
 
     @Test

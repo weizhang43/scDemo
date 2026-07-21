@@ -54,4 +54,11 @@ public class ResponseDto<T> {
         responseDto.setMsg(msg);
         return responseDto;
     }
+
+
+    public static <T>ResponseDto<T> success(){
+        ResponseDto responseDto = new ResponseDto();
+        responseDto.setCode(200);
+        return responseDto;
+    }
 }

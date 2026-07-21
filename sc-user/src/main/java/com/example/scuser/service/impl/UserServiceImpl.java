@@ -75,7 +75,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         Page<User> page = new Page<>(pageNo, pageSize);
         LambdaQueryWrapper<User> queryWrapper = new LambdaQueryWrapper<User>()
                 .select(User::getUId, User::getUName, User::getRealName,
-                        User::getGender, User::getPhone, User::getBirthday)
+                        User::getGender, User::getPhone, User::getBirthday, User::getEmail)
                 .eq(gender != null, User::getGender, gender)
                 .ge(birthdayStart != null && !birthdayStart.isEmpty(), User::getBirthday, birthdayStart)
                 .le(birthdayEnd != null && !birthdayEnd.isEmpty(), User::getBirthday, birthdayEnd)
@@ -200,7 +200,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     public void export(String key, Integer gender, String birthdayStart, String birthdayEnd, HttpServletResponse response) throws Exception {
         LambdaQueryWrapper<User> queryWrapper = new LambdaQueryWrapper<User>()
                 .select(User::getUId, User::getUName, User::getRealName,
-                        User::getGender, User::getPhone, User::getBirthday)
+                        User::getGender, User::getPhone, User::getBirthday, User::getEmail)
                 .eq(gender != null, User::getGender, gender)
                 .ge(birthdayStart != null && !birthdayStart.isEmpty(), User::getBirthday, birthdayStart)
                 .le(birthdayEnd != null && !birthdayEnd.isEmpty(), User::getBirthday, birthdayEnd)

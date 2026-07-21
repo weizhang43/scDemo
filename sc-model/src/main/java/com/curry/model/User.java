@@ -34,4 +34,7 @@ public class User {
     @JsonProperty("birthday")
     @TableField("birthday")
     private String birthday;
+
+    @TableField("email")
+    private String email;
 }

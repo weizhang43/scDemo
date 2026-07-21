@@ -5,10 +5,8 @@ import com.alibaba.fastjson.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.curry.model.Address;
-import com.curry.model.Order;
-import com.curry.model.OrderItem;
-import com.curry.model.Product;
+import com.curry.model.*;
+import com.example.scorder.config.RabbitMqConfig;
 import com.example.scorder.dto.PlaceOrderRequest;
 import com.example.scorder.dto.SeckillRequest;
 import com.example.scorder.entity.OrderStockRestoreMsg;
@@ -23,10 +21,10 @@ import com.example.scorder.vo.OrderExportVO;
 import com.example.scorder.vo.SeckillResultVO;
 import io.seata.spring.annotation.GlobalTransactional;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.compress.utils.Lists;
 import org.redisson.api.RBucket;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -43,7 +41,6 @@ import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
-import static response.ResponseDto.SUCCESS_CODE;
 
 @Service
 @Slf4j
@@ -69,6 +66,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
     @Autowired
     private OrderStockRestoreMsgMapper orderStockRestoreMsgMapper;
+
+    @Autowired
+    private RabbitTemplate rabbitTemplate;
 
     /** 秒杀结果 key 前缀：seckill:result:{uId}:{pId} */
     private static final String SECKILL_RESULT_KEY = "seckill:result:";
@@ -385,7 +385,32 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 log.info("订单 {} 回库存消息已存在，跳过写入", id);
             }
         }
-        return ResponseDto.success(null);
+        //消息队列发送邮件通知
+        toSendMail(exists.getAddPerson(),exists.getOrderNo(),orderStatus);
+
+        return ResponseDto.success();
+    }
+
+    /**
+     * 发送邮件
+     * @param addPerson
+     * @param orderNo
+     * @param orderStatus
+     */
+    public void toSendMail(String addPerson,String orderNo,Integer orderStatus){
+        String subject = "订单完成通知";
+        String message = "您好，编号为【"+orderNo+"】的订单已经完成，可前往系统进行查看";
+        if(CANCEL_ORDER_STATUS.compareTo(orderStatus) == 0){
+            subject = "订单取消通知";
+            message = "您好，编号为【"+orderNo+"】的订单已经取消，可前往系统进行查看";
+        }
+        OrderMessage orderMessage = new OrderMessage(addPerson,subject,message);
+        rabbitTemplate.convertAndSend(
+                RabbitMqConfig.EXCHANGE_DIRECT,
+                RabbitMqConfig.ROUTING_KEY_EMAIL,
+                orderMessage
+                );
+        log.info("发送邮件成功");
     }
 
     /**
