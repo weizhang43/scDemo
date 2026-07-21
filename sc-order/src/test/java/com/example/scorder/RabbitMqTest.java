@@ -3,7 +3,6 @@ package com.example.scorder;
 import com.curry.model.Order;
 import com.example.scorder.config.RabbitMqConfig;
 import com.example.scorder.mq.OrderMqConsumer;
-import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;

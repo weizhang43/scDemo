@@ -4,7 +4,6 @@ import com.baomidou.mybatisplus.extension.service.IService;
 import com.curry.model.Module;
 import response.ResponseDto;
 
-import java.util.List;
 
 public interface ModuleService extends IService<Module> {
 

@@ -4,7 +4,6 @@ import com.example.scproduct.service.ExportTaskService;
 import com.example.scproduct.service.ProductService;
 import com.example.scproduct.vo.ExportTaskStatus;
 import com.example.scproduct.vo.ExportTaskVO;
-import org.redisson.api.RBucket;
 import org.redisson.api.RMap;
 import org.redisson.api.RedissonClient;
 import org.slf4j.Logger;

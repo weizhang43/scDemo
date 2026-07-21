@@ -1,9 +1,6 @@
 package com.example.scproduct.service;
 
 import com.example.scproduct.vo.ExportTaskVO;
-import com.example.scproduct.vo.ExportTaskStatus;
-import org.springframework.web.context.request.RequestContextHolder;
-import org.springframework.web.context.request.ServletRequestAttributes;
 
 import javax.servlet.http.HttpServletResponse;
 

@@ -1,6 +1,5 @@
 package com.example.scorder.service;
 
-import com.curry.model.Address;
 import com.curry.model.Product;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.stereotype.Component;

@@ -3,7 +3,6 @@ package com.example.scorder.mq;
 import com.curry.model.OrderMessage;
 import com.example.scorder.config.RabbitMqConfig;
 import com.example.scorder.service.UserFeignService;
-import groovy.beans.ListenerList;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
