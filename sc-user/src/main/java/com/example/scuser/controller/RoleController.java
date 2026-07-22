@@ -1,6 +1,7 @@
 package com.example.scuser.controller;
 
 import com.curry.model.Role;
+import com.example.scuser.annotation.OpLog;
 import com.example.scuser.service.RoleService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -28,16 +29,19 @@ public class RoleController {
         return roleService.listAll();
     }
 
+    @OpLog(module = "角色管理", type = OpLog.OpType.ADD, description = "新增角色")
     @PostMapping
     public ResponseDto<Role> add(@RequestBody Role role) {
         return roleService.add(role);
     }
 
+    @OpLog(module = "角色管理", type = OpLog.OpType.UPDATE, description = "修改角色")
     @PutMapping
     public ResponseDto<Role> update(@RequestBody Role role) {
         return roleService.update(role);
     }
 
+    @OpLog(module = "角色管理", type = OpLog.OpType.DELETE, description = "删除角色")
     @DeleteMapping("/{id}")
     public ResponseDto<Role> remove(@PathVariable("id") Integer id) {
         return roleService.remove(id);

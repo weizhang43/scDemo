@@ -1,0 +1,22 @@
+CREATE TABLE IF NOT EXISTS `t_operation_log` (
+  `log_id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '日志ID',
+  `u_id` INT NULL COMMENT '操作人ID',
+  `u_name` VARCHAR(64) NULL COMMENT '操作人用户名',
+  `module` VARCHAR(64) NULL COMMENT '所属模块',
+  `op_type` VARCHAR(32) NULL COMMENT '操作类型 QUERY/ADD/UPDATE/DELETE/LOGIN/EXPORT/OTHER',
+  `description` VARCHAR(255) NULL COMMENT '操作描述',
+  `method` VARCHAR(255) NULL COMMENT '目标方法（类名.方法名）',
+  `request_uri` VARCHAR(255) NULL COMMENT '请求URI',
+  `request_method` VARCHAR(16) NULL COMMENT 'HTTP方法',
+  `request_params` VARCHAR(2000) NULL COMMENT '请求参数摘要',
+  `response_summary` VARCHAR(2000) NULL COMMENT '返回结果摘要',
+  `ip` VARCHAR(64) NULL COMMENT '操作人IP',
+  `cost_ms` BIGINT NULL COMMENT '耗时(毫秒)',
+  `status` TINYINT NOT NULL DEFAULT 1 COMMENT '执行结果 1-成功 0-失败',
+  `error_msg` VARCHAR(2000) NULL COMMENT '异常信息',
+  `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '操作时间',
+  PRIMARY KEY (`log_id`),
+  KEY `idx_u_id` (`u_id`),
+  KEY `idx_create_time` (`create_time`),
+  KEY `idx_module_op_type` (`module`, `op_type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='操作日志表';
