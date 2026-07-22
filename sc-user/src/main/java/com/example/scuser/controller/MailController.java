@@ -18,6 +18,6 @@ public class MailController {
 
     @PostMapping("/sendMail")
     public ResponseDto sendMail(@RequestBody @Validated OrderMessage orderMessage) {
-        return mailUtil.seneMail(orderMessage);
+        return mailUtil.sendMail(orderMessage);
     }
 }

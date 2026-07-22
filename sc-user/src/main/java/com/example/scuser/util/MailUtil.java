@@ -26,7 +26,7 @@ public class MailUtil {
     @Value("${spring.mail.username}")
     private String sendFrom;
 
-    public ResponseDto seneMail(OrderMessage orderMessage) {
+    public ResponseDto sendMail(OrderMessage orderMessage) {
         try {
             User user = userService.getOne(new LambdaQueryWrapper<User>().eq(
                     User::getUName, orderMessage.getToAcc()
@@ -42,7 +42,7 @@ public class MailUtil {
             mailMessage.setText(orderMessage.getMessage());
             javaMailSender.send(mailMessage);
         } catch (Exception e) {
-            log.error("程序执行报错，报错信息：{}", e.getMessage());
+            log.error("邮件发送失败, toAcc={}", orderMessage.getToAcc(), e);
             return ResponseDto.error(e.getMessage());
         }
         return ResponseDto.success();

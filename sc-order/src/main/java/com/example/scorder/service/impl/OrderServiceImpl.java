@@ -28,6 +28,8 @@ import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import response.ResponseDto;
 
 import javax.servlet.http.HttpServletResponse;
@@ -80,6 +82,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
     /** 已下单状态码 */
     private static final Integer PLACED_ORDER_STATUS = 1;
+
+    /** 已完成状态码 */
+    private static final Integer COMPLETE_ORDER_STATUS = 2;
 
     /**
      * 演示链路：本地创建订单 + Feign 远程创建商品，外加一次 1/0 异常。
@@ -348,8 +353,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         if (id == null) {
             return ResponseDto.error("订单ID不能为空");
         }
-        if (orderStatus == null || orderStatus < 0 || orderStatus > 2) {
-            return ResponseDto.error("订单状态非法(0:订单取消 1:已下单 2:已完成)");
+        // 目标状态只允许 取消/已完成；传 1(已下单) 无意义且会误发通知邮件
+        if (!CANCEL_ORDER_STATUS.equals(orderStatus) && !COMPLETE_ORDER_STATUS.equals(orderStatus)) {
+            return ResponseDto.error("订单状态非法(0:订单取消 2:已完成)");
         }
         Order exists = orderMapper.selectById(id);
         if (exists == null) {
@@ -385,32 +391,40 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 log.info("订单 {} 回库存消息已存在，跳过写入", id);
             }
         }
-        //消息队列发送邮件通知
-        toSendMail(exists.getAddPerson(),exists.getOrderNo(),orderStatus);
+        //事务提交成功后再发 MQ 邮件通知，避免回滚后用户仍收到通知
+        final String addPerson = exists.getAddPerson();
+        final String orderNo = exists.getOrderNo();
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                toSendMail(addPerson, orderNo, orderStatus);
+            }
+        });
 
         return ResponseDto.success();
     }
 
     /**
-     * 发送邮件
-     * @param addPerson
-     * @param orderNo
-     * @param orderStatus
+     * 通过 MQ 发送订单状态变更邮件通知；发送失败仅记录日志，不影响主流程。
      */
-    public void toSendMail(String addPerson,String orderNo,Integer orderStatus){
+    private void toSendMail(String addPerson, String orderNo, Integer orderStatus) {
         String subject = "订单完成通知";
-        String message = "您好，编号为【"+orderNo+"】的订单已经完成，可前往系统进行查看";
-        if(CANCEL_ORDER_STATUS.compareTo(orderStatus) == 0){
+        String message = "您好，编号为【" + orderNo + "】的订单已经完成，可前往系统进行查看";
+        if (CANCEL_ORDER_STATUS.equals(orderStatus)) {
             subject = "订单取消通知";
-            message = "您好，编号为【"+orderNo+"】的订单已经取消，可前往系统进行查看";
+            message = "您好，编号为【" + orderNo + "】的订单已经取消，可前往系统进行查看";
         }
-        OrderMessage orderMessage = new OrderMessage(addPerson,subject,message);
-        rabbitTemplate.convertAndSend(
-                RabbitMqConfig.EXCHANGE_DIRECT,
-                RabbitMqConfig.ROUTING_KEY_EMAIL,
-                orderMessage
-                );
-        log.info("发送邮件成功");
+        OrderMessage orderMessage = new OrderMessage(addPerson, subject, message);
+        try {
+            rabbitTemplate.convertAndSend(
+                    RabbitMqConfig.EXCHANGE_DIRECT,
+                    RabbitMqConfig.ROUTING_KEY_EMAIL,
+                    orderMessage
+            );
+            log.info("订单 {} 状态变更邮件通知已投递", orderNo);
+        } catch (Exception e) {
+            log.error("订单 {} 状态变更邮件通知投递失败", orderNo, e);
+        }
     }
 
     /**

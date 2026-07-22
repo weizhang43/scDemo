@@ -9,14 +9,14 @@ import java.util.concurrent.ThreadPoolExecutor;
 
 @Configuration
 @EnableAsync
-public class AsyncConfig {
+public class AsyncConfig2 {
 
     /**
      * 取消订单回库存消息异步消费线程池：核心 4、最大 8、队列 100、空闲 60s。
      * CallerRunsPolicy 让调用线程兜底执行，避免消息丢失。
      */
-    @Bean("stockRestoreExecutor")
-    public ThreadPoolTaskExecutor stockRestoreExecutor() {
+    @Bean("testRestoreExecutor")
+    public ThreadPoolTaskExecutor testRestoreExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setCorePoolSize(5);
         executor.setMaxPoolSize(8);
