@@ -9,6 +9,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import response.ResponseDto;
 
+import javax.servlet.http.HttpServletResponse;
+
 @RestController
 @RequestMapping("/user/operationLog")
 public class OperationLogController {
@@ -30,4 +32,19 @@ public class OperationLogController {
         return operationLogService.page(pageNum, pageSize, uName, module, opType,
                 status, beginTime, endTime);
     }
+
+
+    @GetMapping("/export")
+    public void export(
+            @RequestParam(value = "uName", required = false) String uName,
+            @RequestParam(value = "module", required = false) String module,
+            @RequestParam(value = "opType", required = false) String opType,
+            @RequestParam(value = "status", required = false) Integer status,
+            @RequestParam(value = "beginTime", required = false) String beginTime,
+            @RequestParam(value = "endTime", required = false) String endTime, HttpServletResponse response) {
+        operationLogService.export(uName, module, opType, status, beginTime, endTime ,response);
+    }
+
+
+
 }

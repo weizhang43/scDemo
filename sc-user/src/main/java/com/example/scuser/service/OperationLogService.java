@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.extension.service.IService;
 import com.curry.model.OperationLog;
 import response.ResponseDto;
 
+import javax.servlet.http.HttpServletResponse;
+
 public interface OperationLogService extends IService<OperationLog> {
 
     /** 异步保存日志，失败只记 error，不影响业务 */
@@ -13,4 +15,15 @@ public interface OperationLogService extends IService<OperationLog> {
     ResponseDto<OperationLog> page(Integer pageNum, Integer pageSize,
                                    String uName, String module, String opType,
                                    Integer status, String beginTime, String endTime);
+
+    /**
+     * 导出用户日志
+     * @param uName
+     * @param module
+     * @param opType
+     * @param status
+     * @param beginTime
+     * @param endTime
+     */
+    void export(String uName, String module, String opType, Integer status, String beginTime, String endTime, HttpServletResponse response);
 }
