@@ -26,6 +26,7 @@ import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -38,7 +39,9 @@ import java.math.BigDecimal;
 import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -72,19 +75,22 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     @Autowired
     private RabbitTemplate rabbitTemplate;
 
+    @Autowired
+    private RedisTemplate redisTemplate;
+
     /** 秒杀结果 key 前缀：seckill:result:{uId}:{pId} */
     private static final String SECKILL_RESULT_KEY = "seckill:result:";
 
     /**
      * 订单取消状态码
      */
-    private static final Integer CANCEL_ORDER_STATUS = 0;
-
-    /** 已下单状态码 */
-    private static final Integer PLACED_ORDER_STATUS = 1;
-
+    public static final Integer CANCEL_ORDER_STATUS = -1;
+    /** 待签收状态码 */
+    public static final Integer PLACED_ORDER_STATUS = 1;
     /** 已完成状态码 */
-    private static final Integer COMPLETE_ORDER_STATUS = 2;
+    public static final Integer COMPLETE_ORDER_STATUS = 2;
+    /** 待付款 */
+    public static final Integer UN_COMMIT_ORDER_STATUS = 0;
 
     /**
      * 演示链路：本地创建订单 + Feign 远程创建商品，外加一次 1/0 异常。
@@ -113,10 +119,32 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
      * 按关键字/订单号/创建时间区间分页查询订单，按创建时间与主键倒序返回。
      */
     @Override
-    public ResponseDto<Order> queryOrder(String key, String orderNo, Date createTimeStart, Date createTimeEnd, int pageNo, int pageSize) {
+    public ResponseDto<Order> queryOrder(String key, String orderNo, Integer orderStatus, Date createTimeStart, Date createTimeEnd, int pageNo, int pageSize) {
         Page<Order> page = new Page<>(pageNo, pageSize);
-        orderMapper.selectPageWithUserName(page, key, orderNo, createTimeStart, createTimeEnd);
+        orderMapper.selectPageWithUserName(page, key, orderNo, orderStatus, createTimeStart, createTimeEnd);
         return ResponseDto.success(page);
+    }
+
+    /**
+     * 统计各订单状态数量：无论是否有该状态订单，均返回 -1/0/1/2 四个 key，缺省为 0。
+     */
+    @Override
+    public Map<String, Long> countByStatus(String key, String orderNo, Date createTimeStart, Date createTimeEnd) {
+        Map<String, Long> result = new HashMap<>();
+        result.put(String.valueOf(UN_COMMIT_ORDER_STATUS), 0L);
+        result.put(String.valueOf(PLACED_ORDER_STATUS), 0L);
+        result.put(String.valueOf(COMPLETE_ORDER_STATUS), 0L);
+        result.put(String.valueOf(CANCEL_ORDER_STATUS), 0L);
+        List<Map<String, Object>> rows = orderMapper.countGroupByStatus(key, orderNo, createTimeStart, createTimeEnd);
+        for (Map<String, Object> row : rows) {
+            Object status = row.get("orderStatus");
+            Object cnt = row.get("cnt");
+            if (status == null) {
+                continue;
+            }
+            result.put(String.valueOf(status), cnt == null ? 0L : ((Number) cnt).longValue());
+        }
+        return result;
     }
 
     /**
@@ -193,18 +221,18 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         if (request == null || request.getItems() == null || request.getItems().isEmpty()) {
             return ResponseDto.error("下单商品列表为空");
         }
-        if (request.getuId() == null) {
+        if (request.getUId() == null) {
             return ResponseDto.error("用户ID不能为空");
         }
 
         // 入口分布式锁：防同一用户对同一批商品重复下单
         String itemsKey = request.getItems().stream()
-                .map(PlaceOrderRequest.Item::getpId)
+                .map(PlaceOrderRequest.Item::getPId)
                 .filter(Objects::nonNull)
                 .sorted()
                 .map(String::valueOf)
                 .collect(Collectors.joining(","));
-        String lockKey = "lock:order:place:" + request.getuId() + ":" + itemsKey.hashCode();
+        String lockKey = "lock:order:place:" + request.getUId() + ":" + itemsKey.hashCode();
         RLock lock = redissonClient.getLock(lockKey);
         boolean locked = false;
         try {
@@ -232,7 +260,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         List<Product> deductItems = new ArrayList<>();
         for (PlaceOrderRequest.Item it : request.getItems()) {
             Product p = new Product();
-            p.setPId(it.getpId());
+            p.setPId(it.getPId());
             p.setStock(it.getQuantity());
             deductItems.add(p);
         }
@@ -262,7 +290,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         order.setAddPerson(request.getAddPerson() == null || request.getAddPerson().isEmpty()
                 ? "anonymous" : request.getAddPerson());
         order.setCreateTime(new Date());
-        order.setOrderStatus(1);
+        order.setOrderStatus(request.getOrderStatus());
         order.setOrderNo(generateOrderNo());
         order.setOrderAddress(orderAddress);
 
@@ -282,7 +310,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         for (PlaceOrderRequest.Item it : request.getItems()) {
             OrderItem oi = new OrderItem();
             oi.setOId(order.getOId());
-            oi.setPId(it.getpId());
+            oi.setPId(it.getPId());
             oi.setQuantity(it.getQuantity());
             oi.setPrice(it.getPrice() == null ? null
                     : BigDecimal.valueOf(it.getPrice().doubleValue()));
@@ -290,7 +318,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
         // 批量补商品名称快照
         List<Integer> pIds = new ArrayList<>();
-        for (PlaceOrderRequest.Item it : request.getItems()) pIds.add(it.getpId());
+        for (PlaceOrderRequest.Item it : request.getItems()) pIds.add(it.getPId());
         try {
             ResponseDto<Product> prodResp = orderFeignService.listByIds(pIds);
             if (prodResp != null && prodResp.getCode() != null && prodResp.getCode() == 200
@@ -309,6 +337,11 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         if (!itemRecords.isEmpty()) {
             orderItemMapper.insertBatch(itemRecords);
         }
+        if(UN_COMMIT_ORDER_STATUS.compareTo(request.getOrderStatus()) == 0){
+            //未提交订单，三分钟不提交自动超时
+            redisTemplate.opsForValue().set("orderExpired:"+order.getOId(),"1",20,TimeUnit.SECONDS);
+        }
+
 
         return ResponseDto.success(order);
     }

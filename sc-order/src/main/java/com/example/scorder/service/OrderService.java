@@ -11,6 +11,7 @@ import response.ResponseDto;
 import javax.servlet.http.HttpServletResponse;
 import java.util.Date;
 import java.util.List;
+import java.util.Map;
 
 public interface OrderService extends IService<Order> {
     /**
@@ -22,7 +23,12 @@ public interface OrderService extends IService<Order> {
     /**
      * 分页查询订单
      */
-    ResponseDto<Order> queryOrder(String key, String orderNo, Date createTimeStart, Date createTimeEnd, int pageNo, int pageSize);
+    ResponseDto<Order> queryOrder(String key, String orderNo, Integer orderStatus, Date createTimeStart, Date createTimeEnd, int pageNo, int pageSize);
+
+    /**
+     * 统计各订单状态数量（用于列表状态 Tab 徽标），返回 key 为状态值字符串、value 为数量。
+     */
+    Map<String, Long> countByStatus(String key, String orderNo, Date createTimeStart, Date createTimeEnd);
 
     /**
      * 批量下单（旧版）：扣减所选商品库存并创建订单

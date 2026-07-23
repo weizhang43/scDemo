@@ -24,6 +24,7 @@ import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 @RestController
@@ -91,20 +92,34 @@ public class OrderController {
     @SentinelResource(value = "order-queryOrder",blockHandler = "queryOrderBlockHandler")
     public ResponseDto<Order> queryOrder(@RequestParam(value = "key", required = false) String key,
                                          @RequestParam(value = "orderNo", required = false) String orderNo,
+                                         @RequestParam(value = "orderStatus", required = false) Integer orderStatus,
                                          @RequestParam(value = "createTimeStart", required = false)
                                          @DateTimeFormat(pattern = "yyyy-MM-dd") Date createTimeStart,
                                          @RequestParam(value = "createTimeEnd", required = false)
                                          @DateTimeFormat(pattern = "yyyy-MM-dd") Date createTimeEnd,
                                          @RequestParam(value = "pageNo", defaultValue = "1") int pageNo,
                                          @RequestParam(value = "pageSize", defaultValue = "10") int pageSize) {
-        return orderService.queryOrder(key, orderNo, createTimeStart, createTimeEnd, pageNo, pageSize);
+        return orderService.queryOrder(key, orderNo, orderStatus, createTimeStart, createTimeEnd, pageNo, pageSize);
+    }
+
+    /**
+     * 统计各订单状态数量（列表状态 Tab 徽标用），过滤条件与 queryOrder 一致但不含状态本身。
+     */
+    @GetMapping("/statusCount")
+    public ResponseDto<Map<String, Long>> statusCount(@RequestParam(value = "key", required = false) String key,
+                                                      @RequestParam(value = "orderNo", required = false) String orderNo,
+                                                      @RequestParam(value = "createTimeStart", required = false)
+                                                      @DateTimeFormat(pattern = "yyyy-MM-dd") Date createTimeStart,
+                                                      @RequestParam(value = "createTimeEnd", required = false)
+                                                      @DateTimeFormat(pattern = "yyyy-MM-dd") Date createTimeEnd) {
+        return ResponseDto.success(orderService.countByStatus(key, orderNo, createTimeStart, createTimeEnd));
     }
 
 
     /**
      * 兜底方法：参数列表须与原方法一致，末尾追加 BlockException，否则 Sentinel 匹配不到
      */
-    public ResponseDto<Order> queryOrderBlockHandler(String key, String orderNo,
+    public ResponseDto<Order> queryOrderBlockHandler(String key, String orderNo, Integer orderStatus,
                                          Date createTimeStart, Date createTimeEnd,
                                          int pageNo, int pageSize, BlockException ex) {
         Page<Order> page = new Page<>();

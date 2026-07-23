@@ -8,6 +8,9 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
+import java.util.List;
+import java.util.Map;
+
 @Mapper
 public interface OrderMapper extends BaseMapper<Order> {
 
@@ -48,6 +51,9 @@ public interface OrderMapper extends BaseMapper<Order> {
             "  <if test='orderNo != null and orderNo != \"\"'>",
             "    AND o.order_no LIKE CONCAT('%', #{orderNo}, '%')",
             "  </if>",
+            "  <if test='orderStatus != null'>",
+            "    AND o.order_status = #{orderStatus}",
+            "  </if>",
             "  <if test='createTimeStart != null'>",
             "    AND o.create_time &gt;= #{createTimeStart}",
             "  </if>",
@@ -61,6 +67,40 @@ public interface OrderMapper extends BaseMapper<Order> {
     IPage<Order> selectPageWithUserName(IPage<Order> page,
                                         @Param("key") String key,
                                         @Param("orderNo") String orderNo,
+                                        @Param("orderStatus") Integer orderStatus,
                                         @Param("createTimeStart") java.util.Date createTimeStart,
                                         @Param("createTimeEnd") java.util.Date createTimeEnd);
+
+    /**
+     * 按订单状态分组统计数量（用于列表状态 Tab 的数量徽标）。
+     * 过滤条件与 selectPageWithUserName 一致，但不含 orderStatus 本身。
+     */
+    @Select({
+            "<script>",
+            "SELECT o.order_status AS orderStatus, COUNT(*) AS cnt",
+            "FROM t_order o",
+            "LEFT JOIN t_user u ON o.add_person = u.u_name",
+            "<where>",
+            "  <if test='key != null and key != \"\"'>",
+            "    AND (u.u_name LIKE CONCAT('%', #{key}, '%')",
+            "         OR u.real_name LIKE CONCAT('%', #{key}, '%')",
+            "         OR o.add_person LIKE CONCAT('%', #{key}, '%'))",
+            "  </if>",
+            "  <if test='orderNo != null and orderNo != \"\"'>",
+            "    AND o.order_no LIKE CONCAT('%', #{orderNo}, '%')",
+            "  </if>",
+            "  <if test='createTimeStart != null'>",
+            "    AND o.create_time &gt;= #{createTimeStart}",
+            "  </if>",
+            "  <if test='createTimeEnd != null'>",
+            "    AND o.create_time &lt;= #{createTimeEnd}",
+            "  </if>",
+            "</where>",
+            "GROUP BY o.order_status",
+            "</script>"
+    })
+    List<Map<String, Object>> countGroupByStatus(@Param("key") String key,
+                                                 @Param("orderNo") String orderNo,
+                                                 @Param("createTimeStart") java.util.Date createTimeStart,
+                                                 @Param("createTimeEnd") java.util.Date createTimeEnd);
 }

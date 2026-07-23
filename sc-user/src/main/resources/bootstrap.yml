@@ -25,6 +25,11 @@ spring:
   application:
     # 应用名称
     name: sc-user
+  # 数据库连接池：与导出线程池最大并发（15）匹配，避免多线程查询等待连接
+  datasource:
+    hikari:
+      maximum-pool-size: 16
+      minimum-idle: 4
   profiles:
     # 环境配置
     active: test
