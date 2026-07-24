@@ -1,0 +1,53 @@
+# Tomcat
+server:
+  port: 8004
+# Spring
+spring:
+  application:
+    # 应用名称
+    name: sc-job
+  profiles:
+    # 环境配置
+    active: test
+  cloud:
+    nacos:
+      discovery:
+        # 服务注册地址
+        server-addr: localhost:8848
+      config:
+        # 配置中心地址
+        server-addr: localhost:8848
+        # 配置文件格式
+        file-extension: yml
+        # 共享配置
+        shared-configs:
+          - data-id: application-${spring.profiles.active}.${spring.cloud.nacos.config.file-extension}
+            refresh: true
+# xxl-job
+xxl:
+  job:
+    # 调度中心地址
+    admin:
+      addresses: http://localhost:8080/xxl-job-admin
+    # 通信令牌，与调度中心一致；为空则关闭
+    accessToken:
+    executor:
+      appname: sc-job
+      address:
+      ip:
+      port: 9999
+      logpath: ./xxl-job/jobhandler
+      logretentiondays: 30
+
+# Feign 超时：handleProDescJob / dealProductImage 等长任务可能运行数十分钟
+feign:
+  client:
+    config:
+      default:
+        connectTimeout: 5000
+        readTimeout: 1800000
+
+# 服务间内部调用令牌，需与下游服务（sc-product 等）配置一致
+inner:
+  auth:
+    token: sc-inner-token-2024

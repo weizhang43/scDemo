@@ -1,25 +1,29 @@
-package com.example.scproduct.job;
+package com.curry.scjob.job;
 
-import com.example.scproduct.service.ProductService;
+import com.curry.scjob.service.ProductFeignService;
 import com.xxl.job.core.handler.annotation.XxlJob;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import response.ResponseDto;
 
 import java.text.SimpleDateFormat;
 import java.util.Date;
 
+import static response.ResponseDto.SUCCESS_CODE;
+
 /**
  * 商品过期处理任务
  * 调度名称：handleProductExpiredJob
- * 逻辑：扫描所有 is_expired=0 的商品，若 production_date + shelf_life 天 < 当前日期，则将 is_expired 改为 1。
+ * 逻辑：通过 Feign 触发 sc-product 扫描所有 is_expired=0 的商品，
+ *       若 production_date + shelf_life 天 < 当前日期，则将 is_expired 改为 1。
  */
 @Slf4j
 @Component
 public class HandleProductExpiredJobHandler {
 
     @Autowired
-    private ProductService productService;
+    private ProductFeignService productFeignService;
 
     /**
      * XXL-Job 入口：扫描未过期商品并将已过期的标记为 is_expired=1。
@@ -30,9 +34,12 @@ public class HandleProductExpiredJobHandler {
         log.info("[handleProductExpiredJob] start, scanTime={}", now);
         long start = System.currentTimeMillis();
         try {
-            int count = productService.markExpiredProducts();
+            ResponseDto<Integer> resp = productFeignService.markExpired();
+            if (resp == null || !SUCCESS_CODE.equals(resp.getCode())) {
+                throw new RuntimeException("sc-product markExpired fail, resp=" + resp);
+            }
             log.info("[handleProductExpiredJob] finish, markedExpired={} costMs={}",
-                    count, System.currentTimeMillis() - start);
+                    resp.getDaoResult(), System.currentTimeMillis() - start);
         } catch (Exception e) {
             log.error("[handleProductExpiredJob] error", e);
             throw new RuntimeException(e);

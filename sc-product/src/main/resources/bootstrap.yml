@@ -72,23 +72,6 @@ product:
     dir: D:/code/project/product-images
     # 商品图片批量补图任务（dealProductImage）的源图片目录
     source-dir: D:/code/project/photo
-
-# xxl-job
-xxl:
-  job:
-    # 调度中心地址
-    admin:
-      addresses: http://localhost:8080/xxl-job-admin
-    # 通信令牌，与调度中心一致；为空则关闭
-    accessToken:
-    executor:
-      appname: sc-product
-      address:
-      ip:
-      port: 9999
-      logpath: D:/code/project/my-project/scDemo/sc-product/xxl-job/jobhandler
-      logretentiondays: 30
-
 # Redisson
 redisson:
   config: |
@@ -100,4 +83,14 @@ redisson:
       idleConnectionTimeout: 10000
       connectTimeout: 3000
       timeout: 3000
+
+# 服务间内部调用令牌（sc-job 定时任务等无用户上下文场景），需与调用方配置一致
+inner:
+  auth:
+    token: sc-inner-token-2024
+
+# chat 服务地址（AI 补商品描述任务使用）
+scdemo:
+  chat:
+    base-url: http://localhost:9000
 

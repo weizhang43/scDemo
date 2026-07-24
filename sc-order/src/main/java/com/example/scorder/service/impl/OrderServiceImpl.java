@@ -339,7 +339,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
         if(UN_COMMIT_ORDER_STATUS.compareTo(request.getOrderStatus()) == 0){
             //未提交订单，三分钟不提交自动超时
-            redisTemplate.opsForValue().set("orderExpired:"+order.getOId(),"1",20,TimeUnit.SECONDS);
+            redisTemplate.opsForValue().set("orderExpired:"+order.getOId(),"1",30*60,TimeUnit.SECONDS);
+            //todo 使用消息队列实现订单超时
         }
 
 
@@ -395,8 +396,10 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             return ResponseDto.error("订单不存在");
         }
         Integer currentStatus = exists.getOrderStatus();
-        // 状态机校验：只有「已下单」能流转到「取消」或「已完成」
-        if (!Objects.equals(currentStatus, PLACED_ORDER_STATUS)) {
+        // 状态机校验：「已下单(1)」可流转到「取消」或「已完成」；「未提交(0)」超时可流转到「取消」
+        boolean allowed = Objects.equals(currentStatus, PLACED_ORDER_STATUS)
+                || (Objects.equals(currentStatus, UN_COMMIT_ORDER_STATUS) && CANCEL_ORDER_STATUS.equals(orderStatus));
+        if (!allowed) {
             // 已经是目标状态则视为幂等成功
             if (Objects.equals(currentStatus, orderStatus)) {
                 return ResponseDto.success(null);

@@ -31,6 +31,12 @@ public final class AuthConstant {
     /** Bearer 前缀 */
     public static final String BEARER_PREFIX = "Bearer ";
 
+    /** 请求头：服务间内部调用令牌（无用户上下文的定时任务/MQ 消费场景使用） */
+    public static final String HEADER_X_INNER_TOKEN = "X-Inner-Token";
+
+    /** 内部令牌的配置项 key，各服务在配置中心/环境变量中配置相同的值 */
+    public static final String INNER_TOKEN_PROPERTY = "inner.auth.token";
+
     /**
      * 拼装登录 token 在 Redis 中的 key，格式：login:token:{uId}:{token}。
      */

@@ -3,6 +3,7 @@ package com.example.scorder.listener;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.curry.model.Order;
 import com.example.scorder.service.OrderService;
+import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RPatternTopic;
 import org.redisson.api.RedissonClient;
 import org.redisson.client.codec.StringCodec;
@@ -14,9 +15,10 @@ import javax.annotation.PostConstruct;
 import static com.example.scorder.service.impl.OrderServiceImpl.CANCEL_ORDER_STATUS;
 
 @Component
+@Slf4j
 public class RedisExpireListener {
 
-    private static final String EXPIRED_KEY_PREFIX = "orderExpired:";
+    public static final String EXPIRED_KEY_PREFIX = "orderExpired:";
 
     @Autowired
     private RedissonClient redissonClient;
@@ -32,7 +34,8 @@ public class RedisExpireListener {
         topic.addListener(String.class, (pattern, channel, expiredKey) -> {
             if (expiredKey != null && expiredKey.startsWith(EXPIRED_KEY_PREFIX)) {
                 String orderId = expiredKey.substring(EXPIRED_KEY_PREFIX.length());
-                orderService.updateStatus(Integer.parseInt(orderId),CANCEL_ORDER_STATUS);
+                Object result = orderService.updateStatus(Integer.parseInt(orderId), CANCEL_ORDER_STATUS);
+                log.info("订单超时未提交，自动取消 orderId={}, result={}",orderId,result);
             }
         });
     }

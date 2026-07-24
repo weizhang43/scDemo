@@ -19,6 +19,7 @@
         <module>sc-product</module>
         <module>sc-gateway</module>
         <module>sc-user</module>
+        <module>sc-job</module>
     </modules>
     <packaging>pom</packaging>
     <properties>
@@ -108,13 +109,6 @@
             <groupId>cn.hutool</groupId>
             <artifactId>hutool-all</artifactId>
             <version>${hutool.version}</version>
-        </dependency>
-
-        <!--xxl job-->
-        <dependency>
-            <groupId>com.xuxueli</groupId>
-            <artifactId>xxl-job-core</artifactId>
-            <version>${xxl-job.version}</version>
         </dependency>
 
         <!--lombok-->

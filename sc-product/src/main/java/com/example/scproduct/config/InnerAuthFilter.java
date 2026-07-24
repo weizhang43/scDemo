@@ -1,6 +1,7 @@
 package com.example.scproduct.config;
 
 import com.curry.model.auth.AuthConstant;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -24,8 +25,13 @@ public class InnerAuthFilter extends OncePerRequestFilter {
             "/actuator"
     };
 
+    /** 服务间内部调用令牌，为空表示未启用内部令牌放行 */
+    @Value("${" + AuthConstant.INNER_TOKEN_PROPERTY + ":}")
+    private String innerToken;
+
     /**
      * 内部鉴权过滤：actuator 与商品图片查看（GET /product/image/{fileName}）放行；
+     * 携带合法 X-Inner-Token 的服务间调用（sc-job 定时任务等无用户上下文场景）放行；
      * 其它路径要求请求头携带网关注入的 X-User-Id，缺失则直接返回 401。
      * 用 contains 匹配以兼容 context-path 前缀差异。
      */
@@ -39,6 +45,11 @@ public class InnerAuthFilter extends OncePerRequestFilter {
         boolean isImageGet = "GET".equalsIgnoreCase(method)
                 && path.contains("/product/image/");
         if (isActuator || isImageGet) {
+            chain.doFilter(request, response);
+            return;
+        }
+        String reqInnerToken = request.getHeader(AuthConstant.HEADER_X_INNER_TOKEN);
+        if (innerToken != null && !innerToken.isEmpty() && innerToken.equals(reqInnerToken)) {
             chain.doFilter(request, response);
             return;
         }

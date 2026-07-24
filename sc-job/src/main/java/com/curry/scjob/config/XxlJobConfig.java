@@ -1,4 +1,4 @@
-package com.example.scproduct.config;
+package com.curry.scjob.config;
 
 import com.xxl.job.core.executor.impl.XxlJobSpringExecutor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,7 +16,7 @@ public class XxlJobConfig {
     @Value("${xxl.job.accessToken:}")
     private String accessToken;
 
-    @Value("${xxl.job.executor.appname:sc-product}")
+    @Value("${xxl.job.executor.appname:sc-job}")
     private String appname;
 
     @Value("${xxl.job.executor.address:}")
