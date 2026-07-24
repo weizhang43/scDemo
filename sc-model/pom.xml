@@ -13,30 +13,15 @@
     <version>0.0.1-SNAPSHOT</version>
     <name>sc-model</name>
     <description>sc-model</description>
-    <properties>
-        <java.version>1.8</java.version>
-    </properties>
     <dependencies>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-
+        <!-- MyBatis-Plus（实体注解） -->
         <dependency>
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-boot-starter</artifactId>
-            <version>${mybatis-plus.version}</version>
         </dependency>
         <dependency>
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-extension</artifactId>
-            <version>${mybatis-plus.version}</version>
         </dependency>
 
         <!-- JSR-303 校验注解（OrderMessage 等实体使用） -->
@@ -45,17 +30,16 @@
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
 
+        <!-- EasyExcel（实体导出注解） -->
+        <dependency>
+            <groupId>com.alibaba</groupId>
+            <artifactId>easyexcel</artifactId>
+        </dependency>
+
         <!-- Jackson（供 auth 包中的 JwtUtil 序列化 payload 使用） -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
-        </dependency>
-
-        <!-- Lombok -->
-        <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <optional>true</optional>
         </dependency>
     </dependencies>
 

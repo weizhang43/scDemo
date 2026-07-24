@@ -13,15 +13,7 @@
     <version>0.0.1-SNAPSHOT</version>
     <name>sc-product</name>
     <description>sc-product</description>
-    <properties>
-        <java.version>1.8</java.version>
-    </properties>
     <dependencies>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter</artifactId>
-        </dependency>
-
         <!-- Web (Servlet MVC) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -36,25 +28,10 @@
         <dependency>
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-boot-starter</artifactId>
-            <version>${mybatis-plus.version}</version>
         </dependency>
         <dependency>
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-extension</artifactId>
-            <version>${mybatis-plus.version}</version>
-        </dependency>
-
-        <!-- 公共实体模块 -->
-        <dependency>
-            <groupId>com.example</groupId>
-            <artifactId>sc-model</artifactId>
-            <version>0.0.1-SNAPSHOT</version>
-        </dependency>
-
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
         </dependency>
 
         <!-- Nacos 服务注册与发现 -->
@@ -69,16 +46,32 @@
             <artifactId>spring-cloud-starter-alibaba-nacos-config</artifactId>
         </dependency>
 
+        <!-- 启用 bootstrap.yml (Spring Cloud 2020.x 起默认关闭) -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-bootstrap</artifactId>
+        </dependency>
+
+        <!-- Seata 分布式事务（作为 RM 参与 sc-order 发起的全局事务） -->
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-seata</artifactId>
+        </dependency>
+
         <!-- Seata kryo 序列化所需依赖 (seata-all 中 kryo 序列化器为 provided) -->
         <dependency>
             <groupId>com.esotericsoftware</groupId>
             <artifactId>kryo-shaded</artifactId>
-            <version>4.0.2</version>
         </dependency>
         <dependency>
             <groupId>de.javakaffee</groupId>
             <artifactId>kryo-serializers</artifactId>
-            <version>0.45</version>
+        </dependency>
+
+        <!-- Sentinel 限流（@SentinelResource） -->
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-sentinel</artifactId>
         </dependency>
 
         <!-- Redisson 分布式锁 -->
@@ -93,27 +86,34 @@
             <artifactId>spring-boot-starter-data-elasticsearch</artifactId>
         </dependency>
 
-        <!-- 启用 bootstrap.yml (Spring Cloud 2020.x 起默认关闭) -->
+        <!-- AOP：ProductService 方法日志/耗时切面 -->
         <dependency>
-            <groupId>org.springframework.cloud</groupId>
-            <artifactId>spring-cloud-starter-bootstrap</artifactId>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
         </dependency>
 
+        <!-- EasyExcel 导出 -->
+        <dependency>
+            <groupId>com.alibaba</groupId>
+            <artifactId>easyexcel</artifactId>
+        </dependency>
+
+        <!-- Commons IO：批量补图任务读取本地图片 -->
         <dependency>
             <groupId>commons-io</groupId>
             <artifactId>commons-io</artifactId>
-            <version>2.16.1</version>
         </dependency>
 
+        <!-- MockMultipartFile（批量补图任务构造上传文件） -->
         <dependency>
             <groupId>org.springframework</groupId>
             <artifactId>spring-test</artifactId>
         </dependency>
 
-        <!-- AOP：ProductService 方法日志/耗时切面 -->
+        <!-- 公共实体模块 -->
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-aop</artifactId>
+            <groupId>com.example</groupId>
+            <artifactId>sc-model</artifactId>
         </dependency>
     </dependencies>
 

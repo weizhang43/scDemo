@@ -29,12 +29,15 @@
         <spring-cloud-alibaba.version>2021.1</spring-cloud-alibaba.version>
         <alibaba.nacos.version>2.0.3</alibaba.nacos.version>
         <mybatis-plus.version>3.4.3.4</mybatis-plus.version>
-        <hutool.version>5.7.16</hutool.version>
         <log4j2.version>2.16.0</log4j2.version>
         <xxl-job.version>2.3.0</xxl-job.version>
         <lombok.version>1.18.22</lombok.version>
         <easyexcel.version>3.1.1</easyexcel.version>
         <redisson-spring-boot-starter.version>3.16.4</redisson-spring-boot-starter.version>
+        <guava.version>33.2.1-jre</guava.version>
+        <kryo-shaded.version>4.0.2</kryo-shaded.version>
+        <kryo-serializers.version>0.45</kryo-serializers.version>
+        <commons-io.version>2.16.1</commons-io.version>
     </properties>
 
     <dependencyManagement>
@@ -57,15 +60,90 @@
                 <scope>import</scope>
             </dependency>
 
+            <!-- Alibaba Nacos 客户端版本锁定（starter 传递引入，统一升级到 2.x） -->
+            <dependency>
+                <groupId>com.alibaba.nacos</groupId>
+                <artifactId>nacos-client</artifactId>
+                <version>${alibaba.nacos.version}</version>
+            </dependency>
+
             <!-- Redisson -->
             <dependency>
                 <groupId>org.redisson</groupId>
                 <artifactId>redisson-spring-boot-starter</artifactId>
                 <version>${redisson-spring-boot-starter.version}</version>
             </dependency>
+
+            <!-- MyBatis-Plus -->
+            <dependency>
+                <groupId>com.baomidou</groupId>
+                <artifactId>mybatis-plus-boot-starter</artifactId>
+                <version>${mybatis-plus.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.baomidou</groupId>
+                <artifactId>mybatis-plus-extension</artifactId>
+                <version>${mybatis-plus.version}</version>
+            </dependency>
+
+            <!-- XXL-Job -->
+            <dependency>
+                <groupId>com.xuxueli</groupId>
+                <artifactId>xxl-job-core</artifactId>
+                <version>${xxl-job.version}</version>
+            </dependency>
+
+            <!-- EasyExcel -->
+            <dependency>
+                <groupId>com.alibaba</groupId>
+                <artifactId>easyexcel</artifactId>
+                <version>${easyexcel.version}</version>
+            </dependency>
+
+            <!-- Guava -->
+            <dependency>
+                <groupId>com.google.guava</groupId>
+                <artifactId>guava</artifactId>
+                <version>${guava.version}</version>
+            </dependency>
+
+            <!-- Seata kryo 序列化所需依赖 (seata-all 中 kryo 序列化器为 provided) -->
+            <dependency>
+                <groupId>com.esotericsoftware</groupId>
+                <artifactId>kryo-shaded</artifactId>
+                <version>${kryo-shaded.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>de.javakaffee</groupId>
+                <artifactId>kryo-serializers</artifactId>
+                <version>${kryo-serializers.version}</version>
+            </dependency>
+
+            <!-- Commons IO -->
+            <dependency>
+                <groupId>commons-io</groupId>
+                <artifactId>commons-io</artifactId>
+                <version>${commons-io.version}</version>
+            </dependency>
+
+            <!-- 公共实体模块 -->
+            <dependency>
+                <groupId>com.example</groupId>
+                <artifactId>sc-model</artifactId>
+                <version>0.0.1-SNAPSHOT</version>
+            </dependency>
+
+            <!-- Apache Commons Lang -->
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-lang3</artifactId>
+                <version>3.12.0</version> <!-- 请检查最新版本 -->
+            </dependency>
+
         </dependencies>
     </dependencyManagement>
 
+    <!-- 全部子模块共用的依赖 -->
     <dependencies>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -85,80 +163,28 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- Alibaba Nacos 配置 -->
-        <dependency>
-            <groupId>com.alibaba.nacos</groupId>
-            <artifactId>nacos-client</artifactId>
-            <version>${alibaba.nacos.version}</version>
-        </dependency>
-
-        <!-- SpringCloud Openfeign -->
-        <dependency>
-            <groupId>org.springframework.cloud</groupId>
-            <artifactId>spring-cloud-starter-openfeign</artifactId>
-        </dependency>
-
-        <!-- SpringCloud Loadbalancer -->
-        <dependency>
-            <groupId>org.springframework.cloud</groupId>
-            <artifactId>spring-cloud-starter-loadbalancer</artifactId>
-        </dependency>
-
-        <!-- Hutool -->
-        <dependency>
-            <groupId>cn.hutool</groupId>
-            <artifactId>hutool-all</artifactId>
-            <version>${hutool.version}</version>
-        </dependency>
-
         <!--lombok-->
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
             <version>${lombok.version}</version>
         </dependency>
-
-        <!--easyexcel-->
-        <dependency>
-            <groupId>com.alibaba</groupId>
-            <artifactId>easyexcel</artifactId>
-            <version>${easyexcel.version}</version>
-        </dependency>
-
-        <!-- SpringBoot Seata -->
-        <dependency>
-            <groupId>com.alibaba.cloud</groupId>
-            <artifactId>spring-cloud-starter-alibaba-seata</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>com.alibaba.cloud</groupId>
-            <artifactId>spring-cloud-starter-alibaba-sentinel</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>com.google.guava</groupId>
-            <artifactId>guava</artifactId>
-            <version>33.2.1-jre</version> <!-- 推荐使用最新稳定版，如 33.x-jre -->
-        </dependency>
-
-
-        <!-- 邮件发送 -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-mail</artifactId>
-        </dependency>
-
-
     </dependencies>
 
+    <!-- 全部微服务子模块（除 sc-model 外）共用的依赖，profile 方式无法区分，直接放在各子模块中的：
+         nacos-discovery / nacos-config / bootstrap 由各服务模块声明（sc-model 纯实体 jar 不需要） -->
+
     <build>
-        <plugins>
-            <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
-            </plugin>
-        </plugins>
+        <!-- 仅管理插件版本；sc-model 为纯 jar 无 main 类，不能全局强制 repackage，
+             各可运行子模块自行声明 spring-boot-maven-plugin -->
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                </plugin>
+            </plugins>
+        </pluginManagement>
     </build>
 
 </project>

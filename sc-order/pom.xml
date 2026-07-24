@@ -13,15 +13,7 @@
     <version>0.0.1-SNAPSHOT</version>
     <name>sc-order</name>
     <description>sc-order</description>
-    <properties>
-        <java.version>1.8</java.version>
-    </properties>
     <dependencies>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter</artifactId>
-        </dependency>
-
         <!-- Web (Servlet MVC) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -36,12 +28,10 @@
         <dependency>
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-boot-starter</artifactId>
-            <version>${mybatis-plus.version}</version>
         </dependency>
         <dependency>
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-extension</artifactId>
-            <version>${mybatis-plus.version}</version>
         </dependency>
 
         <!-- Nacos 服务注册与发现 -->
@@ -56,7 +46,13 @@
             <artifactId>spring-cloud-starter-alibaba-nacos-config</artifactId>
         </dependency>
 
-        <!-- SpringBoot Seata -->
+        <!-- 启用 bootstrap.yml (Spring Cloud 2020.x 起默认关闭) -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-bootstrap</artifactId>
+        </dependency>
+
+        <!-- Seata 分布式事务（@GlobalTransactional） -->
         <dependency>
             <groupId>com.alibaba.cloud</groupId>
             <artifactId>spring-cloud-starter-alibaba-seata</artifactId>
@@ -66,18 +62,16 @@
         <dependency>
             <groupId>com.esotericsoftware</groupId>
             <artifactId>kryo-shaded</artifactId>
-            <version>4.0.2</version>
         </dependency>
         <dependency>
             <groupId>de.javakaffee</groupId>
             <artifactId>kryo-serializers</artifactId>
-            <version>0.45</version>
         </dependency>
 
-        <!-- 启用 bootstrap.yml (Spring Cloud 2020.x 起默认关闭) -->
+        <!-- Sentinel 限流（@SentinelResource） -->
         <dependency>
-            <groupId>org.springframework.cloud</groupId>
-            <artifactId>spring-cloud-starter-bootstrap</artifactId>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-sentinel</artifactId>
         </dependency>
 
         <!-- Redisson 分布式锁 -->
@@ -92,29 +86,34 @@
             <artifactId>spring-cloud-starter-openfeign</artifactId>
         </dependency>
 
-        <!-- 公共实体模块 -->
+        <!-- Feign 负载均衡 -->
         <dependency>
-            <groupId>com.example</groupId>
-            <artifactId>sc-model</artifactId>
-            <version>0.0.1-SNAPSHOT</version>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-loadbalancer</artifactId>
         </dependency>
 
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <!-- Spring Boot AMQP Starter -->
+        <!-- RabbitMQ -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-amqp</artifactId>
         </dependency>
 
-        <!-- 可选：JSON 序列化 -->
+        <!-- EasyExcel 导出 -->
         <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
+            <groupId>com.alibaba</groupId>
+            <artifactId>easyexcel</artifactId>
+        </dependency>
+
+        <!-- Guava -->
+        <dependency>
+            <groupId>com.google.guava</groupId>
+            <artifactId>guava</artifactId>
+        </dependency>
+
+        <!-- 公共实体模块 -->
+        <dependency>
+            <groupId>com.example</groupId>
+            <artifactId>sc-model</artifactId>
         </dependency>
     </dependencies>
 
