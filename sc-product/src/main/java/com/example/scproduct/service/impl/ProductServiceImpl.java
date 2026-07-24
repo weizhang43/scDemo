@@ -91,6 +91,19 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
         return ResponseDto.success(null);
     }
 
+    @Override
+    public ResponseDto<Product> listExpiringSoon() {
+        return ResponseDto.success(productMapper.selectExpiringWithin(3));
+    }
+
+    @Override
+    public ResponseDto<Product> listLowStock(int threshold) {
+        LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<Product>()
+                .lt(Product::getStock, threshold)
+                .orderByAsc(Product::getStock);
+        return ResponseDto.success(productMapper.selectList(wrapper));
+    }
+
     /**
      * 按商品名关键字 + 价格区间分页查询，按价格倒序、ID 升序返回。
      */

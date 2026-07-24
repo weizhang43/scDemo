@@ -39,6 +39,19 @@ public class ProductController {
             Arrays.asList("垃圾袋", "手机","电脑","衣服","雨伞",
                     "零食","汽车","饮料","电风扇","手机壳");
 
+    /** 首页预警：三个月内即将过期的商品 */
+    @GetMapping("/warning/expiring")
+    public ResponseDto<Product> expiringSoon() {
+        return productService.listExpiringSoon();
+    }
+
+    /** 首页预警：库存不足的商品（阈值默认 100） */
+    @GetMapping("/warning/lowStock")
+    public ResponseDto<Product> lowStock(@RequestParam(value = "threshold", defaultValue = "100") Integer threshold) {
+        return productService.listLowStock(threshold);
+    }
+
+
 
     /**
      * 批量生成 100 条随机商品（演示链路），通过 saveBatch 分批入库。

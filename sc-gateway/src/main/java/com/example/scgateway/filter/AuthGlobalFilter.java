@@ -89,6 +89,17 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
             boolean isImage = fileName.indexOf('/') < 0
                     && fileName.toLowerCase().matches(".*\\.(png|jpg|jpeg|gif|webp)$");
             log.info("[AuthFilter] 图片路径检查 method={}, fileName={}, isImage={}", method, fileName, isImage);
+
+            if ("GET".equalsIgnoreCase(method) && isImage) {
+                return chain.filter(exchange);
+            }
+        }
+
+        // 通知图片查看：对 /user/image/{fileName} 且扩展名为图片的 GET 请求放行
+        if (path.startsWith("/user/image/")) {
+            String fileName = path.substring("/user/image/".length());
+            boolean isImage = fileName.indexOf('/') < 0
+                    && fileName.toLowerCase().matches(".*\\.(png|jpg|jpeg|gif|webp)$");
             if ("GET".equalsIgnoreCase(method) && isImage) {
                 return chain.filter(exchange);
             }

@@ -5,6 +5,7 @@ import com.curry.model.Order;
 import com.curry.model.Product;
 import com.example.scorder.dto.PlaceOrderRequest;
 import com.example.scorder.dto.SeckillRequest;
+import com.example.scorder.vo.OrderTimeoutVO;
 import com.example.scorder.vo.SeckillResultVO;
 import response.ResponseDto;
 
@@ -19,6 +20,12 @@ public interface OrderService extends IService<Order> {
      * 触发异常会引发跨服务全局回滚。
      */
     ResponseDto<Order> addOrder();
+
+    /**
+     * 首页预警：查询状态为 0 的订单，附带到期时间（createTime + 超时时长）供前端倒计时。
+     */
+    ResponseDto<OrderTimeoutVO> listTimeoutWarning();
+
 
     /**
      * 分页查询订单

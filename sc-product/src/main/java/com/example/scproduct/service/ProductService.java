@@ -15,6 +15,17 @@ public interface ProductService extends IService<Product> {
     ResponseDto<Product> addProduct();
 
     /**
+     * 首页预警：查询三个月内即将过期的商品（到期日=生产日期+保质期天数）。
+     */
+    ResponseDto<Product> listExpiringSoon();
+
+    /**
+     * 首页预警：查询库存低于阈值的商品（默认 100）。
+     */
+    ResponseDto<Product> listLowStock(int threshold);
+
+
+    /**
      * 分页查找商品
      * @param key
      * @param price

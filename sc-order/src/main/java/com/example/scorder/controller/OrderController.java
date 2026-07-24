@@ -42,6 +42,12 @@ public class OrderController {
     @Autowired
     private RedissonClient redissonClient;
 
+    /** 首页预警：状态为0的订单，带到期时间供倒计时 */
+    @GetMapping("/warning/timeout")
+    public ResponseDto<com.example.scorder.vo.OrderTimeoutVO> timeoutWarning() {
+        return orderService.listTimeoutWarning();
+    }
+
     /** requestId 幂等键 TTL */
     private static final long IDEM_TTL_SECONDS = 30;
 

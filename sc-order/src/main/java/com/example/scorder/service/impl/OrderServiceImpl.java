@@ -18,6 +18,7 @@ import com.example.scorder.service.OrderFeignService;
 import com.example.scorder.service.OrderService;
 import com.example.scorder.service.UserFeignService;
 import com.example.scorder.vo.OrderExportVO;
+import com.example.scorder.vo.OrderTimeoutVO;
 import com.example.scorder.vo.SeckillResultVO;
 import io.seata.spring.annotation.GlobalTransactional;
 import lombok.extern.slf4j.Slf4j;
@@ -114,6 +115,31 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return ResponseDto.success(null);
 
     }
+
+    /** 订单超时时长（分钟）：状态为0的订单以 createTime + 该时长作为倒计时到期点 */
+    private static final int TIMEOUT_MINUTES = 30;
+
+    @Override
+    public ResponseDto<OrderTimeoutVO> listTimeoutWarning() {
+        LambdaQueryWrapper<Order> wrapper = new LambdaQueryWrapper<Order>()
+                .eq(Order::getOrderStatus, 0)
+                .orderByAsc(Order::getCreateTime);
+        List<Order> orders = orderMapper.selectList(wrapper);
+        List<OrderTimeoutVO> list = orders.stream().map(o -> {
+            OrderTimeoutVO vo = new OrderTimeoutVO();
+            vo.setOId(o.getOId());
+            vo.setOrderNo(o.getOrderNo());
+            vo.setOrderAmount(o.getOrderAmount());
+            vo.setOrderStatus(o.getOrderStatus());
+            vo.setCreateTime(o.getCreateTime());
+            if (o.getCreateTime() != null) {
+                vo.setExpireTime(new Date(o.getCreateTime().getTime() + TIMEOUT_MINUTES * 60L * 1000L));
+            }
+            return vo;
+        }).collect(Collectors.toList());
+        return ResponseDto.success(list);
+    }
+
 
     /**
      * 按关键字/订单号/创建时间区间分页查询订单，按创建时间与主键倒序返回。

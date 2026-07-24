@@ -11,6 +11,10 @@ server:
 scdemo:
   chat:
     base-url: http://localhost:9000
+# 通知图片/富文本图片上传目录
+user:
+  image:
+    dir: D:/code/project/notice-images
 # Spring
 spring:
   # 图片上传大小限制（图片文字识别）
