@@ -27,7 +27,8 @@ import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -38,12 +39,9 @@ import javax.servlet.http.HttpServletResponse;
 import java.io.Serializable;
 import java.math.BigDecimal;
 import java.net.URLEncoder;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.text.DecimalFormat;
+import java.text.SimpleDateFormat;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -76,9 +74,6 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     @Autowired
     private RabbitTemplate rabbitTemplate;
 
-    @Autowired
-    private RedisTemplate redisTemplate;
-
     /** 秒杀结果 key 前缀：seckill:result:{uId}:{pId} */
     private static final String SECKILL_RESULT_KEY = "seckill:result:";
 
@@ -92,6 +87,10 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     public static final Integer COMPLETE_ORDER_STATUS = 2;
     /** 待付款 */
     public static final Integer UN_COMMIT_ORDER_STATUS = 0;
+
+    /** 订单超时时长（分钟）：状态为0的订单以 createTime + 该时长作为倒计时到期点 */
+    @Value("${order-timeout-minute:30}")
+    private Integer orderTimeOutMinute;
 
     /**
      * 演示链路：本地创建订单 + Feign 远程创建商品，外加一次 1/0 异常。
@@ -116,9 +115,6 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
     }
 
-    /** 订单超时时长（分钟）：状态为0的订单以 createTime + 该时长作为倒计时到期点 */
-    private static final int TIMEOUT_MINUTES = 30;
-
     @Override
     public ResponseDto<OrderTimeoutVO> listTimeoutWarning() {
         LambdaQueryWrapper<Order> wrapper = new LambdaQueryWrapper<Order>()
@@ -133,7 +129,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             vo.setOrderStatus(o.getOrderStatus());
             vo.setCreateTime(o.getCreateTime());
             if (o.getCreateTime() != null) {
-                vo.setExpireTime(new Date(o.getCreateTime().getTime() + TIMEOUT_MINUTES * 60L * 1000L));
+                vo.setExpireTime(new Date(o.getCreateTime().getTime() + orderTimeOutMinute * 60L * 1000L));
             }
             return vo;
         }).collect(Collectors.toList());
@@ -349,7 +345,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             ResponseDto<Product> prodResp = orderFeignService.listByIds(pIds);
             if (prodResp != null && prodResp.getCode() != null && prodResp.getCode() == 200
                     && prodResp.getDataList() != null) {
-                java.util.Map<Integer, String> nameMap = new java.util.HashMap<>();
+                Map<Integer, String> nameMap = new HashMap<>();
                 for (Product p : prodResp.getDataList()) {
                     if (p.getPId() != null) nameMap.put(p.getPId(), p.getPName());
                 }
@@ -365,8 +361,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
         if(UN_COMMIT_ORDER_STATUS.compareTo(request.getOrderStatus()) == 0){
             //未提交订单，三分钟不提交自动超时
-            redisTemplate.opsForValue().set("orderExpired:"+order.getOId(),"1",30*60,TimeUnit.SECONDS);
+            //redisTemplate.opsForValue().set("orderExpired:"+order.getOId(),"1",30*60,TimeUnit.SECONDS);
             //todo 使用消息队列实现订单超时
+            rabbitTemplate.convertAndSend("",RabbitMqConfig.QUEUE_ORDER,order.getOId());
         }
 
 
@@ -393,11 +390,11 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
      * 注意：高并发下可能存在并发冲突，需配合唯一索引兜底重试。
      */
     private String generateOrderNo() {
-        java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("yyyyMMdd");
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMdd");
         String dayPrefix = sdf.format(new Date());
         int count = orderMapper.countByDay(dayPrefix);
         int seq = count + 1;
-        java.text.DecimalFormat df = new java.text.DecimalFormat("0000");
+        DecimalFormat df = new DecimalFormat("0000");
         return "ORD" + dayPrefix + df.format(seq);
     }
 
@@ -448,7 +445,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             msg.setNextRetry(new Date());
             try {
                 orderStockRestoreMsgMapper.insert(msg);
-            } catch (org.springframework.dao.DuplicateKeyException dupEx) {
+            } catch (DuplicateKeyException dupEx) {
                 // 消息已存在，说明已有取消任务在途，无需重复写
                 log.info("订单 {} 回库存消息已存在，跳过写入", id);
             }
@@ -587,7 +584,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             item.setPId(pId);
             item.setStock(1);
             ResponseDto<Product> deduct = orderFeignService.checkAndDeductStock(
-                    java.util.Collections.singletonList(item));
+                    Collections.singletonList(item));
             if (deduct == null || deduct.getCode() == null || deduct.getCode() != 200) {
                 throw new RuntimeException(deduct == null ? "扣减库存失败" : deduct.getMsg());
             }
@@ -596,7 +593,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             Integer price = null;
             String pName = null;
             ResponseDto<Product> prodResp = orderFeignService.listByIds(
-                    java.util.Collections.singletonList(pId));
+                    Collections.singletonList(pId));
             if (prodResp != null && prodResp.getCode() != null && prodResp.getCode() == 200
                     && prodResp.getDataList() != null && !prodResp.getDataList().isEmpty()) {
                 Product p = prodResp.getDataList().get(0);

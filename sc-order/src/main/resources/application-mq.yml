@@ -21,6 +21,7 @@ spring:
           max-attempts: 3
           initial-interval: 1000ms
           multiplier: 2
+        default-requeue-rejected: false
     # 生产者确认
     publisher-confirm-type: correlated
     publisher-returns: true

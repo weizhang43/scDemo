@@ -2,7 +2,7 @@ package com.example.scorder;
 
 import com.curry.model.Order;
 import com.example.scorder.config.RabbitMqConfig;
-import com.example.scorder.mq.OrderMqConsumer;
+import com.example.scorder.listener.OrderMqListener;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,7 +14,7 @@ public class RabbitMqTest {
     private RabbitTemplate rabbitTemplate;
 
     @Autowired
-    private OrderMqConsumer orderMqConsumer;
+    private OrderMqListener orderMqListener;
 
     /**
      * 先发送，再由测试主动调用消费方法拉取，验证发送与消费链路。
