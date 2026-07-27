@@ -5,6 +5,7 @@ import com.alibaba.csp.sentinel.slots.block.BlockException;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.curry.model.Order;
 import com.curry.model.Product;
+import com.curry.model.annotation.OpLog;
 import com.example.scorder.config.OrderConfig;
 import com.example.scorder.dto.PlaceOrderRequest;
 import com.example.scorder.dto.SeckillRequest;
@@ -170,6 +171,7 @@ public class OrderController {
     /**
      * 批量下单V2：校验+扣库存+订单+订单商品中间表
      */
+    @OpLog(module = "订单管理", type = OpLog.OpType.ADD, description = "批量下单V2")
     @PostMapping("/placeOrderV2")
     public ResponseDto<Order> placeOrderV2(@RequestBody PlaceOrderRequest request) {
         return orderService.placeOrder(request);
@@ -178,6 +180,7 @@ public class OrderController {
     /**
      * 秒杀下单：Redis 预扣 → 异步落库，立即返回结果状态
      */
+    @OpLog(module = "订单管理", type = OpLog.OpType.ADD, description = "秒杀下单")
     @PostMapping("/seckill")
     public ResponseDto<SeckillResultVO> seckill(@RequestBody SeckillRequest request) {
         return orderService.seckill(request);
@@ -204,6 +207,7 @@ public class OrderController {
      * 更新订单状态（如待支付/已支付/已取消等流转）。
      * requestId 可选：前端传则用 Redis SETNX 做幂等去重，30s 内同 requestId 视为重复提交。
      */
+    @OpLog(module = "订单管理", type = OpLog.OpType.UPDATE, description = "更新订单状态")
     @PostMapping("/updateStatus")
     public ResponseDto<Order> updateStatus(@RequestParam("id") Integer id,
                                            @RequestParam("orderStatus") Integer orderStatus,
@@ -221,6 +225,7 @@ public class OrderController {
     /**
      * 按主键删除订单（逻辑/物理删除由 Service 决定）。
      */
+    @OpLog(module = "订单管理", type = OpLog.OpType.DELETE, description = "删除订单")
     @DeleteMapping("/{id}")
     public ResponseDto<Order> delete(@PathVariable("id") Integer id) {
         return orderService.removeOrder(id);

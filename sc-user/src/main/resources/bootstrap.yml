@@ -64,3 +64,8 @@ spring:
         max-idle: 8
         min-idle: 2
         max-wait: 2000ms
+
+# 服务间内部调用令牌（校验其它模块转发来的操作日志），需与各调用方一致
+inner:
+  auth:
+    token: sc-inner-token-2024

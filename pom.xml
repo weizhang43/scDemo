@@ -15,6 +15,7 @@
     <description>scDemo</description>
     <modules>
         <module>sc-model</module>
+        <module>sc-common-log</module>
         <module>sc-order</module>
         <module>sc-product</module>
         <module>sc-gateway</module>
@@ -130,6 +131,13 @@
             <dependency>
                 <groupId>com.example</groupId>
                 <artifactId>sc-model</artifactId>
+                <version>0.0.1-SNAPSHOT</version>
+            </dependency>
+
+            <!-- 操作日志共享 starter -->
+            <dependency>
+                <groupId>com.example</groupId>
+                <artifactId>sc-common-log</artifactId>
                 <version>0.0.1-SNAPSHOT</version>
             </dependency>
 

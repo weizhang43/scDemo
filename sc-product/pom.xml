@@ -115,6 +115,12 @@
             <groupId>com.example</groupId>
             <artifactId>sc-model</artifactId>
         </dependency>
+
+        <!-- 操作日志共享 starter：@OpLog 记录并 Feign 转发至 sc-user 落库（含 openfeign/loadbalancer） -->
+        <dependency>
+            <groupId>com.example</groupId>
+            <artifactId>sc-common-log</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

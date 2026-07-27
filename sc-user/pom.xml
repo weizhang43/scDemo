@@ -93,6 +93,12 @@
             <groupId>com.example</groupId>
             <artifactId>sc-model</artifactId>
         </dependency>
+
+        <!-- 操作日志共享 starter：提供 @OpLog 切面；sc-user 作为唯一落库方 -->
+        <dependency>
+            <groupId>com.example</groupId>
+            <artifactId>sc-common-log</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

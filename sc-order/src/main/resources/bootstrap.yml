@@ -59,3 +59,8 @@ redisson:
       connectTimeout: 3000
       timeout: 3000
 
+# 服务间内部调用令牌（定时任务/MQ 消费等无用户上下文场景），需与 sc-product 配置一致
+inner:
+  auth:
+    token: sc-inner-token-2024
+

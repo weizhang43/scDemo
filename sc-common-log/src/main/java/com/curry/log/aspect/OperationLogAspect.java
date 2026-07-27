@@ -1,37 +1,41 @@
-package com.example.scuser.aspect;
+package com.curry.log.aspect;
 
+import com.curry.log.sink.OperationLogSink;
 import com.curry.model.OperationLog;
+import com.curry.model.annotation.OpLog;
 import com.curry.model.auth.AuthConstant;
-import com.example.scuser.annotation.OpLog;
-import com.example.scuser.service.OperationLogService;
 import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.reflect.MethodSignature;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 import javax.servlet.http.HttpServletRequest;
 import java.util.Arrays;
 import java.util.Date;
+import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
 
 /**
- * 拦截标注 @OpLog 的方法，组装操作日志后异步落库。
- * 落库失败不影响业务；参数/返回值截断，防止大对象撑爆字段。
+ * 共享操作日志切面：拦截 @OpLog，在请求线程同步组装 OperationLog(读取 ThreadLocal 中的请求上下文)，
+ * 再交给独立线程池异步经 OperationLogSink 落地，避免阻塞业务、也不依赖各模块的 @EnableAsync。
+ * 落地失败不影响业务；参数/返回值截断，防止大对象撑爆字段。
  */
 @Slf4j
 @Aspect
-@Component
 public class OperationLogAspect {
 
     private static final int MAX_SUMMARY = 2000;
 
-    @Autowired
-    private OperationLogService operationLogService;
+    private final OperationLogSink sink;
+    private final Executor executor;
+
+    public OperationLogAspect(OperationLogSink sink, Executor executor) {
+        this.sink = sink;
+        this.executor = executor;
+    }
 
     @Around("@annotation(opLog)")
     public Object around(ProceedingJoinPoint pjp, OpLog opLog) throws Throwable {
@@ -46,15 +50,18 @@ public class OperationLogAspect {
             throw e;
         } finally {
             try {
-                record(pjp, opLog, ret, error, System.currentTimeMillis() - start);
+                // 组装必须在请求线程同步完成：uId/ip/uri 来自线程本地的请求上下文
+                OperationLog entity = build(pjp, opLog, ret, error,
+                        System.currentTimeMillis() - start);
+                executor.execute(() -> sink.save(entity));
             } catch (Exception e) {
                 log.error("[OperationLog] 组装操作日志失败", e);
             }
         }
     }
 
-    private void record(ProceedingJoinPoint pjp, OpLog opLog, Object ret,
-                        Throwable error, long costMs) {
+    private OperationLog build(ProceedingJoinPoint pjp, OpLog opLog, Object ret,
+                               Throwable error, long costMs) {
         MethodSignature signature = (MethodSignature) pjp.getSignature();
         OperationLog entity = new OperationLog();
         entity.setModule(opLog.module());
@@ -87,7 +94,7 @@ public class OperationLogAspect {
             entity.setStatus(1);
             entity.setResponseSummary(ret == null ? null : summarize(ret.toString()));
         }
-        operationLogService.saveAsync(entity);
+        return entity;
     }
 
     private HttpServletRequest currentRequest() {

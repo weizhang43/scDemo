@@ -1,4 +1,4 @@
-package com.example.scuser.annotation;
+package com.curry.model.annotation;
 
 import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
@@ -7,7 +7,8 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * 标注在 Controller 方法上，由 OperationLogAspect 拦截并记录操作日志到 t_operation_log。
+ * 标注在 Controller 方法上，由共享的 OperationLogAspect 拦截并记录操作日志到 t_operation_log。
+ * 放在 sc-model 供所有业务模块引用。
  */
 @Documented
 @Target(ElementType.METHOD)

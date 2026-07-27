@@ -3,6 +3,7 @@ package com.example.scproduct.controller;
 import com.alibaba.csp.sentinel.annotation.SentinelResource;
 import com.alibaba.csp.sentinel.slots.block.BlockException;
 import com.curry.model.Product;
+import com.curry.model.annotation.OpLog;
 import com.example.scproduct.service.ExportTaskService;
 import com.example.scproduct.service.ProductService;
 import com.example.scproduct.vo.ExportTaskVO;
@@ -101,6 +102,7 @@ public class ProductController {
     /**
      * 按主键更新商品信息。
      */
+    @OpLog(module = "商品管理", type = OpLog.OpType.UPDATE, description = "修改商品")
     @PutMapping
     public boolean update(@RequestBody Product product) {
         return productService.updateById(product);
@@ -109,6 +111,7 @@ public class ProductController {
     /**
      * 按主键删除商品。
      */
+    @OpLog(module = "商品管理", type = OpLog.OpType.DELETE, description = "删除商品")
     @DeleteMapping("/{id}")
     public boolean delete(@PathVariable("id") Integer id) {
         return productService.removeById(id);
@@ -154,6 +157,7 @@ public class ProductController {
     /**
      * 新增商品
      */
+    @OpLog(module = "商品管理", type = OpLog.OpType.ADD, description = "新增商品")
     @PostMapping("/add")
     public ResponseDto<Product> add(@RequestBody Product product) {
         return productService.addOne(product);
