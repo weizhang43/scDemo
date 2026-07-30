@@ -37,4 +37,8 @@ public class User {
 
     @TableField("email")
     private String email;
+
+    @JsonProperty("uType")
+    @TableField("u_type")
+    private Integer uType;
 }

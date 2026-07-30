@@ -3,6 +3,7 @@ package com.example.scuser.controller;
 import com.curry.model.User;
 import com.curry.model.auth.AuthConstant;
 import com.curry.model.auth.LoginUser;
+import com.example.scuser.dto.RegisterRequest;
 import com.example.scuser.service.TokenService;
 import com.example.scuser.service.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,8 +33,8 @@ public class UserController {
     private TokenService tokenService;
 
     @PostMapping("/register")
-    public ResponseDto<User> register(@RequestBody User user) {
-        return userService.register(user);
+    public ResponseDto<User> register(@RequestBody RegisterRequest request) {
+        return userService.register(request);
     }
 
     @PostMapping("/login")
@@ -78,6 +79,11 @@ public class UserController {
     @PostMapping("/sendSmsCode")
     public ResponseDto<User> sendSmsCode(@RequestParam("phone") String phone) {
         return userService.sendSmsCode(phone);
+    }
+
+    @PostMapping("/sendEmailCode")
+    public ResponseDto<User> sendEmailCode(@RequestParam("email") String email) {
+        return userService.sendEmailCode(email);
     }
 
     @PostMapping("/resetPassword")

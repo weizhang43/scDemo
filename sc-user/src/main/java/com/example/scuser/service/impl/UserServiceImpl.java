@@ -5,9 +5,12 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.curry.model.User;
+import com.example.scuser.dto.RegisterRequest;
 import com.example.scuser.mapper.UserMapper;
 import com.example.scuser.service.UserService;
+import com.example.scuser.util.MailUtil;
 import com.example.scuser.vo.UserExportVO;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import response.ResponseDto;
 
@@ -18,16 +21,36 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
 
 @Service
 public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements UserService {
 
     private static final long CODE_TTL_MS = 5 * 60 * 1000L;
 
+    /** 邮箱验证码有效期 3 分钟，与短信的 5 分钟不同，故单独定义 */
+    private static final long EMAIL_CODE_TTL_MS = 3 * 60 * 1000L;
+
+    /** 同一邮箱的最短重发间隔，与前端 60s 倒计时保持一致 */
+    private static final long RESEND_INTERVAL_MS = 60 * 1000L;
+
+    private static final Pattern EMAIL_PATTERN =
+            Pattern.compile("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$");
+
     private final Map<String, CodeEntry> codeStore = new ConcurrentHashMap<>();
 
+    /** 邮箱验证码与短信验证码分开存放，避免两套流程互相顶掉 */
+    private final Map<String, CodeEntry> emailCodeStore = new ConcurrentHashMap<>();
+
+    @Autowired
+    private MailUtil mailUtil;
+
     @Override
-    public ResponseDto<User> register(User user) {
+    public ResponseDto<User> register(RegisterRequest request) {
+        if (request == null) {
+            return ResponseDto.error("请求参数不能为空");
+        }
+        User user = request.toUser();
         if (user.getUName() == null || user.getUName().trim().isEmpty()) {
             return ResponseDto.error("用户名不能为空");
         }
@@ -46,8 +69,86 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
                 return ResponseDto.error("手机号已被注册");
             }
         }
+        // uType 来自请求体，/user/register 又在网关白名单内；
+        // 此处只放行商家/顾客，否则任何人都能注册成管理员
+        Integer uType = user.getUType();
+        if (uType == null || (uType != 1 && uType != 2)) {
+            return ResponseDto.error("用户类型只能为商家或顾客");
+        }
+        String email = user.getEmail() == null ? null : user.getEmail().trim();
+        if (email == null || email.isEmpty()) {
+            return ResponseDto.error("邮箱不能为空");
+        }
+        if (!EMAIL_PATTERN.matcher(email).matches()) {
+            return ResponseDto.error("邮箱格式不正确");
+        }
+        LambdaQueryWrapper<User> emailWrapper = new LambdaQueryWrapper<User>()
+                .eq(User::getEmail, email);
+        if (!baseMapper.selectList(emailWrapper).isEmpty()) {
+            return ResponseDto.error("邮箱已被注册");
+        }
+        ResponseDto<User> codeCheck = verifyEmailCode(email, request.getEmailCode());
+        if (codeCheck != null) {
+            return codeCheck;
+        }
+        user.setEmail(email);
         baseMapper.insert(user);
+        emailCodeStore.remove(email);
         return ResponseDto.success(null);
+    }
+
+    @Override
+    public ResponseDto<User> sendEmailCode(String email) {
+        String addr = email == null ? null : email.trim();
+        if (addr == null || addr.isEmpty()) {
+            return ResponseDto.error("请输入邮箱");
+        }
+        if (!EMAIL_PATTERN.matcher(addr).matches()) {
+            return ResponseDto.error("邮箱格式不正确");
+        }
+        LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<User>().eq(User::getEmail, addr);
+        if (!baseMapper.selectList(wrapper).isEmpty()) {
+            return ResponseDto.error("邮箱已被注册");
+        }
+        // 前端 60s 倒计时只是 UI 限制，这个端点在网关白名单内可被匿名直连，
+        // 服务端也要限频，否则能拿它对任意地址刷垃圾邮件
+        CodeEntry last = emailCodeStore.get(addr);
+        if (last != null && System.currentTimeMillis() - last.issuedAt < RESEND_INTERVAL_MS) {
+            return ResponseDto.error("验证码发送过于频繁，请稍后再试");
+        }
+        String code = String.format("%06d", new Random().nextInt(1000000));
+        try {
+            mailUtil.sendTo(addr, "注册验证码",
+                    "您的注册验证码是：" + code + "，3 分钟内有效。若非本人操作请忽略此邮件。");
+        } catch (Exception e) {
+            // 发送失败就不要写入 code store，否则用户收不到却以为已发送
+            return ResponseDto.error("验证码发送失败：" + e.getMessage());
+        }
+        emailCodeStore.put(addr, new CodeEntry(code, System.currentTimeMillis() + EMAIL_CODE_TTL_MS));
+        Map<String, Object> data = new HashMap<>();
+        data.put("email", addr);
+        return ResponseDto.success(data);
+    }
+
+    /**
+     * 校验邮箱验证码，通过返回 null，否则返回带错误信息的响应。
+     */
+    private ResponseDto<User> verifyEmailCode(String email, String code) {
+        if (code == null || code.trim().isEmpty()) {
+            return ResponseDto.error("请输入邮箱验证码");
+        }
+        CodeEntry entry = emailCodeStore.get(email);
+        if (entry == null) {
+            return ResponseDto.error("验证码未发送，请先获取验证码");
+        }
+        if (System.currentTimeMillis() > entry.expireAt) {
+            emailCodeStore.remove(email);
+            return ResponseDto.error("验证码已过期，请重新获取");
+        }
+        if (!entry.code.equals(code.trim())) {
+            return ResponseDto.error("验证码错误");
+        }
+        return null;
     }
 
     @Override
@@ -141,9 +242,11 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     private static class CodeEntry {
         final String code;
         final long expireAt;
+        final long issuedAt;
         CodeEntry(String code, long expireAt) {
             this.code = code;
             this.expireAt = expireAt;
+            this.issuedAt = System.currentTimeMillis();
         }
     }
 

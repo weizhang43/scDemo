@@ -2,6 +2,7 @@ package com.example.scuser.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.curry.model.User;
+import com.example.scuser.dto.RegisterRequest;
 import response.ResponseDto;
 
 import javax.servlet.http.HttpServletResponse;
@@ -11,7 +12,12 @@ public interface UserService extends IService<User> {
     /**
      * 用户注册
      */
-    ResponseDto<User> register(User user);
+    ResponseDto<User> register(RegisterRequest request);
+
+    /**
+     * 注册前发送邮箱验证码（六位数字，3 分钟内有效）
+     */
+    ResponseDto<User> sendEmailCode(String email);
 
     /**
      * 用户登录

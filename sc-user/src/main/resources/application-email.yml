@@ -9,6 +9,11 @@ spring:
       mail:
         smtp:
           auth: true
+          # 发信是同步阻塞调用，/user/sendEmailCode 又在网关白名单内，
+          # 不设超时会在 SMTP 不可用时耗尽请求线程
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
           ssl:
             enable: true
           socketFactory:

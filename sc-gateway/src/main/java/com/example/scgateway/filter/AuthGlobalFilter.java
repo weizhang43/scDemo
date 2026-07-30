@@ -55,6 +55,7 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
             "/user/login",
             "/user/register",
             "/user/sendSmsCode",
+            "/user/sendEmailCode",
             "/user/resetPassword",
             "/user/chat",
             "/user/parseImage",
