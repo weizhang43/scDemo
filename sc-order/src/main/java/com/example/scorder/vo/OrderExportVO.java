@@ -54,12 +54,13 @@ public class OrderExportVO {
     }
 
     /**
-     * 将订单状态码转换为导出文案：0 取消 / 1 已下单 / 2 已完成，其它为"未知"。
+     * 将订单状态码转换为导出文案：-1 取消 / 0 待付款 / 1 已下单 / 2 已完成，其它为"未知"。
      */
     private static String statusText(Integer s) {
         if (s == null) return "未知";
         switch (s) {
-            case 0: return "订单取消";
+            case -1: return "订单取消";
+            case 0: return "待付款";
             case 1: return "已下单";
             case 2: return "已完成";
             default: return "未知";

@@ -28,6 +28,16 @@ public interface AddressService extends IService<Address> {
     ResponseDto<Address> removeAddress(Integer aId);
 
     /**
+     * 修改自己的收货地址：先校验地址归属 uId，再更新。
+     */
+    ResponseDto<Address> updateOwn(Address address, Integer uId);
+
+    /**
+     * 删除自己的收货地址：先校验地址归属 uId，再删除。
+     */
+    ResponseDto<Address> removeOwn(Integer aId, Integer uId);
+
+    /**
      * 将某地址设为当前用户的默认地址
      */
     ResponseDto<Address> setDefault(Integer aId, Integer uId);

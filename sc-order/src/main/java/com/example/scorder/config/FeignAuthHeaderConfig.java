@@ -40,6 +40,7 @@ public class FeignAuthHeaderConfig {
             header(request, AuthConstant.HEADER_X_USER_ID, template);
             header(request, AuthConstant.HEADER_X_USER_NAME, template);
             header(request, AuthConstant.HEADER_X_REAL_NAME, template);
+            header(request, AuthConstant.HEADER_X_USER_TYPE, template);
             header(request, AuthConstant.HEADER_AUTHORIZATION, template);
         };
     }

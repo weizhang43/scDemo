@@ -3,6 +3,7 @@ package com.example.scorder.dto;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -22,6 +23,11 @@ public class PlaceOrderRequest {
         @JsonProperty("pId")
         private Integer pId;
         private Integer quantity;
-        private Integer price;
+        /**
+         * 下单时页面上展示的单价（元），仅用于比对，不参与金额计算。
+         * 与服务端权威有效价不一致说明促销恰在下单瞬间开始/结束，直接拒单让用户看到新价格。
+         */
+        @JsonProperty("expectedPrice")
+        private BigDecimal expectedPrice;
     }
 }

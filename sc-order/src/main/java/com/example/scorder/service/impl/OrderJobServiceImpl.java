@@ -15,7 +15,6 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 import static com.example.scorder.listener.RedisExpireListener.EXPIRED_KEY_PREFIX;
-import static com.example.scorder.service.impl.OrderServiceImpl.CANCEL_ORDER_STATUS;
 import static com.example.scorder.service.impl.OrderServiceImpl.UN_COMMIT_ORDER_STATUS;
 
 /**
@@ -47,11 +46,12 @@ public class OrderJobServiceImpl implements OrderJobService {
 
     /**
      * Redis 超时 key 已失效说明订单超时未提交，取消订单。
+     * 查询到执行之间仍有支付窗口，交给 cancelUnSubmitted 再确认一次状态。
      */
     private void dealUnSubmitOrder(Order order) {
         String key = EXPIRED_KEY_PREFIX + order.getOId();
         if (!redisTemplate.hasKey(key)) {
-            orderService.updateStatus(order.getOId(), CANCEL_ORDER_STATUS);
+            orderService.cancelUnSubmitted(order.getOId());
         }
     }
 }

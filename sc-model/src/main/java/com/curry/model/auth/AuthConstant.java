@@ -28,6 +28,18 @@ public final class AuthConstant {
     /** 请求头：Gateway 透传到下游的真实姓名 */
     public static final String HEADER_X_REAL_NAME = "X-Real-Name";
 
+    /** 请求头：Gateway 透传到下游的用户类型（取值见 U_TYPE_*） */
+    public static final String HEADER_X_USER_TYPE = "X-User-Type";
+
+    /** 用户类型：商家 */
+    public static final int U_TYPE_MERCHANT = 1;
+
+    /** 用户类型：顾客 */
+    public static final int U_TYPE_CUSTOMER = 2;
+
+    /** 用户类型：管理员 */
+    public static final int U_TYPE_ADMIN = 3;
+
     /** Bearer 前缀 */
     public static final String BEARER_PREFIX = "Bearer ";
 

@@ -32,17 +32,21 @@ public interface OrderMapper extends BaseMapper<Order> {
                         @Param("version") Integer version);
 
     /**
-     * 联表分页查询：用 t_user.u_name 替换 t_order.add_person（add_person 实际存的是 uId）。
-     * 关键字 key 匹配 u_name / real_name，避免 add_person 数字无法 like 命中。
+     * 联表分页查询：用 t_user.u_name 替换 t_order.add_person（add_person 存的是 uName）。
+     * 关键字 key 同时匹配 u_name / real_name / add_person。
+     * uId 非空时只查该顾客的订单（顾客侧强制归属过滤，商家/管理员传 null）。
      */
     @Select({
             "<script>",
             "SELECT o.o_id, o.order_no, o.create_time, o.order_address,",
-            "       o.order_amount, o.order_status,",
+            "       o.order_amount, o.order_status, o.u_id,",
             "       COALESCE(u.real_name, o.add_person) AS add_person",
             "FROM t_order o",
             "LEFT JOIN t_user u ON o.add_person = u.u_name",
             "<where>",
+            "  <if test='uId != null'>",
+            "    AND o.u_id = #{uId}",
+            "  </if>",
             "  <if test='key != null and key != \"\"'>",
             "    AND (u.u_name LIKE CONCAT('%', #{key}, '%')",
             "         OR u.real_name LIKE CONCAT('%', #{key}, '%')",
@@ -69,7 +73,8 @@ public interface OrderMapper extends BaseMapper<Order> {
                                         @Param("orderNo") String orderNo,
                                         @Param("orderStatus") Integer orderStatus,
                                         @Param("createTimeStart") java.util.Date createTimeStart,
-                                        @Param("createTimeEnd") java.util.Date createTimeEnd);
+                                        @Param("createTimeEnd") java.util.Date createTimeEnd,
+                                        @Param("uId") Integer uId);
 
     /**
      * 按订单状态分组统计数量（用于列表状态 Tab 的数量徽标）。
@@ -81,6 +86,9 @@ public interface OrderMapper extends BaseMapper<Order> {
             "FROM t_order o",
             "LEFT JOIN t_user u ON o.add_person = u.u_name",
             "<where>",
+            "  <if test='uId != null'>",
+            "    AND o.u_id = #{uId}",
+            "  </if>",
             "  <if test='key != null and key != \"\"'>",
             "    AND (u.u_name LIKE CONCAT('%', #{key}, '%')",
             "         OR u.real_name LIKE CONCAT('%', #{key}, '%')",
@@ -102,5 +110,6 @@ public interface OrderMapper extends BaseMapper<Order> {
     List<Map<String, Object>> countGroupByStatus(@Param("key") String key,
                                                  @Param("orderNo") String orderNo,
                                                  @Param("createTimeStart") java.util.Date createTimeStart,
-                                                 @Param("createTimeEnd") java.util.Date createTimeEnd);
+                                                 @Param("createTimeEnd") java.util.Date createTimeEnd,
+                                                 @Param("uId") Integer uId);
 }

@@ -38,6 +38,7 @@ public class TokenService {
         data.put("uId", user.getUId());
         data.put("uName", user.getUName());
         data.put("realName", user.getRealName());
+        data.put("uType", user.getUType());
 
         try {
             String json = objectMapper.writeValueAsString(data);
@@ -81,9 +82,12 @@ public class TokenService {
         if (ttl != null && ttl > 0 && ttl < AuthConstant.RENEW_THRESHOLD_SECONDS) {
             stringRedisTemplate.expire(key, AuthConstant.DEFAULT_TTL_SECONDS, TimeUnit.SECONDS);
         }
+        Object typeVal = data.get("uType");
+        Integer uType = (typeVal instanceof Number) ? ((Number) typeVal).intValue() : null;
         return LoginUser.of(storedUId,
                 data.get("uName") == null ? null : String.valueOf(data.get("uName")),
-                data.get("realName") == null ? null : String.valueOf(data.get("realName")));
+                data.get("realName") == null ? null : String.valueOf(data.get("realName")),
+                uType);
     }
 
     public boolean revoke(String token) {

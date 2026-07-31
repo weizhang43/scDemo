@@ -2,6 +2,7 @@ package com.example.scproduct.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.curry.model.Product;
+import com.example.scproduct.auth.AudienceScope;
 import response.ResponseDto;
 
 import javax.servlet.http.HttpServletResponse;
@@ -17,23 +18,33 @@ public interface ProductService extends IService<Product> {
     /**
      * 首页预警：查询三个月内即将过期的商品（到期日=生产日期+保质期天数）。
      */
-    ResponseDto<Product> listExpiringSoon();
+    ResponseDto<Product> listExpiringSoon(AudienceScope scope);
 
     /**
      * 首页预警：查询库存低于阈值的商品（默认 100）。
      */
-    ResponseDto<Product> listLowStock(int threshold);
-
+    ResponseDto<Product> listLowStock(int threshold, AudienceScope scope);
 
     /**
-     * 分页查找商品
-     * @param key
-     * @param price
-     * @param pageNo
-     * @param pageSize
-     * @return
+     * 顾客首页：好评榜，按点赞数倒序。点赞以 Redis 为权威，返回前会用 Redis 实时值重排。
      */
-    ResponseDto<Product> queryProduct(String key,int price,int pageNo,int pageSize);
+    ResponseDto<Product> listLikeRank(int limit, AudienceScope scope);
+
+    /**
+     * 顾客首页：上新货物，按 p_id 倒序（自增主键，最新录入即最新上架）。
+     */
+    ResponseDto<Product> listNewest(int limit, AudienceScope scope);
+
+    /**
+     * 按主键查询商品，不在可见范围内（如顾客访问已下架商品）时返回 null。
+     */
+    Product getVisibleById(Integer id, AudienceScope scope);
+
+    /**
+     * 按主键批量拉取「可售」商品（status=1）并回填有效价。
+     * 已下架的商品不会出现在返回结果里 —— 调用方据此判断是否还能下单 / 是否该从榜单里剔除。
+     */
+    List<Product> listSellableByIds(List<Integer> ids);
 
     /**
      * 商品列表分页查询：商品名称、商品描述、生产日期区间、产地、是否过期过滤，按 id 倒序。
@@ -46,12 +57,28 @@ public interface ProductService extends IService<Product> {
                                    String origin,
                                    Integer isExpired,
                                    int pageNo,
-                                   int pageSize);
+                                   int pageSize,
+                                   AudienceScope scope);
 
     /**
-     * 新增商品
+     * 新增商品：盖上创建者的 merchant_id，默认上架。
      */
-    ResponseDto<Product> addOne(Product product);
+    ResponseDto<Product> addOne(Product product, AudienceScope scope);
+
+    /**
+     * 按主键更新商品，先校验调用方有权管理该商品。
+     */
+    ResponseDto<Product> updateOne(Product product, AudienceScope scope);
+
+    /**
+     * 按主键删除商品，先校验调用方有权管理该商品。
+     */
+    ResponseDto<Product> removeOne(Integer id, AudienceScope scope);
+
+    /**
+     * 上架 / 下架商品（status 1-上架 0-下架），先校验调用方有权管理该商品。
+     */
+    ResponseDto<Product> setShelfStatus(Integer id, Integer status, AudienceScope scope);
 
     /**
      * 商品点赞：点赞数量 +1，返回最新商品
@@ -63,18 +90,6 @@ public interface ProductService extends IService<Product> {
      * @return 本次实际回写的商品数量
      */
     int flushLikeCount();
-
-    /**
-     * 秒杀预扣库存（Redis 原子操作，一人一单）。
-     * 库存未加载时从 DB 懒加载并校验可秒杀（未过期、库存>=1）。
-     * @return code=200 预扣成功；否则 msg 为失败原因（已售罄/已参与/不可秒杀）
-     */
-    ResponseDto<Product> seckillPreDeduct(Integer pId, Integer uId);
-
-    /**
-     * 秒杀补偿：回滚 Redis 预扣库存并移除用户已购标记（落库失败时调用）。
-     */
-    ResponseDto<Product> rollbackSeckillStock(Integer pId, Integer uId);
 
     /**
      * 批量扣减库存（下单）
@@ -103,6 +118,7 @@ public interface ProductService extends IService<Product> {
                 Date productionDateEnd,
                 String origin,
                 Integer isExpired,
+                AudienceScope scope,
                 HttpServletResponse response) throws Exception;
 
     /**
@@ -124,11 +140,9 @@ public interface ProductService extends IService<Product> {
                       CancelChecker cancelChecker) throws Exception;
 
     /**
-     * 添加库存
-     * @param products
-     * @return
+     * 添加库存（补货 / 取消订单回库），先校验调用方有权管理这些商品。
      */
-    ResponseDto<Product> addStock(List<Product> products);
+    ResponseDto<Product> addStock(List<Product> products, AudienceScope scope);
 
     /** 流式导出查询条件 */
     class ProductExportQuery {
@@ -138,15 +152,18 @@ public interface ProductService extends IService<Product> {
         private final Date productionDateEnd;
         private final String origin;
         private final Integer isExpired;
+        /** 提交任务的调用方可见范围：异步导出线程内取不到请求头，只能随查询条件带过来 */
+        private final AudienceScope scope;
 
         public ProductExportQuery(String pName, String proDesc, Date productionDateStart, Date productionDateEnd,
-                                  String origin, Integer isExpired) {
+                                  String origin, Integer isExpired, AudienceScope scope) {
             this.pName = pName;
             this.proDesc = proDesc;
             this.productionDateStart = productionDateStart;
             this.productionDateEnd = productionDateEnd;
             this.origin = origin;
             this.isExpired = isExpired;
+            this.scope = scope;
         }
 
         public String getpName() { return pName; }
@@ -155,6 +172,7 @@ public interface ProductService extends IService<Product> {
         public Date getProductionDateEnd() { return productionDateEnd; }
         public String getOrigin() { return origin; }
         public Integer getIsExpired() { return isExpired; }
+        public AudienceScope getScope() { return scope; }
     }
 
     @FunctionalInterface

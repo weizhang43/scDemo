@@ -5,8 +5,10 @@ import com.curry.model.OrderItem;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
+import java.util.Map;
 
 @Mapper
 public interface OrderItemMapper extends BaseMapper<OrderItem> {
@@ -21,6 +23,21 @@ public interface OrderItemMapper extends BaseMapper<OrderItem> {
             "</foreach>",
             "</script>"})
     int insertBatch(@Param("list") List<OrderItem> list);
+
+    /**
+     * 商品销量排行：按商品聚合购买数量，仅统计已下单(1)/已完成(2)的订单。
+     * 只按 p_id 分组——p_name 是每单快照，商品改名后同一商品会被拆成多行，故用 MAX 取一个。
+     */
+    @Select({
+            "SELECT i.p_id AS pId, MAX(i.p_name) AS pName, SUM(i.quantity) AS salesCount",
+            "FROM t_order_item i",
+            "JOIN t_order o ON o.o_id = i.o_id",
+            "WHERE o.order_status IN (1, 2)",
+            "GROUP BY i.p_id",
+            "ORDER BY salesCount DESC",
+            "LIMIT #{limit}"
+    })
+    List<Map<String, Object>> selectSalesRank(@Param("limit") int limit);
 }
 
 

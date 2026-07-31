@@ -75,6 +75,46 @@ public class AddressServiceImpl extends ServiceImpl<AddressMapper, Address> impl
     }
 
     @Override
+    public ResponseDto<Address> updateOwn(Address address, Integer uId) {
+        if (address == null || address.getAId() == null) {
+            return ResponseDto.error("地址ID不能为空");
+        }
+        ResponseDto<Address> denied = checkOwnership(address.getAId(), uId);
+        if (denied != null) {
+            return denied;
+        }
+        // 归属以库中记录为准，不接受调用方传入的 uId
+        address.setUId(uId);
+        return updateAddress(address);
+    }
+
+    @Override
+    public ResponseDto<Address> removeOwn(Integer aId, Integer uId) {
+        ResponseDto<Address> denied = checkOwnership(aId, uId);
+        if (denied != null) {
+            return denied;
+        }
+        return removeAddress(aId);
+    }
+
+    /**
+     * 校验地址归属：通过返回 null，否则返回对应的错误响应。
+     */
+    private ResponseDto<Address> checkOwnership(Integer aId, Integer uId) {
+        if (aId == null || uId == null) {
+            return ResponseDto.error("地址ID与用户ID均不能为空");
+        }
+        Address exists = baseMapper.selectById(aId);
+        if (exists == null) {
+            return ResponseDto.error("地址不存在");
+        }
+        if (!uId.equals(exists.getUId())) {
+            return ResponseDto.error("无权操作该地址");
+        }
+        return null;
+    }
+
+    @Override
     public ResponseDto<Address> setDefault(Integer aId, Integer uId) {
         if (aId == null || uId == null) {
             return ResponseDto.error("地址ID与用户ID均不能为空");

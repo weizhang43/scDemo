@@ -135,10 +135,22 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
                     String uName = data.get("uName") == null ? "" : String.valueOf(data.get("uName"));
                     String realName = data.get("realName") == null ? "" : String.valueOf(data.get("realName"));
 
+                    // 本次改动前签发的会话 JSON 里没有 uType，无法判定角色。
+                    // 不做「缺失即当管理员」兜底——那等于给存量顾客会话开一个 TTL 时长的跨商家权限。
+                    // 直接销毁会话强制重登一次，语义无歧义。
+                    Object typeVal = data.get("uType");
+                    if (!(typeVal instanceof Number)) {
+                        log.warn("[AuthFilter] 会话缺少 uType（改动前签发），销毁并要求重新登录, key={}", redisKey);
+                        return stringRedisTemplate.delete(redisKey)
+                                .then(unauthorizedMono(exchange, "登录信息需要更新，请重新登录"));
+                    }
+                    String uType = String.valueOf(((Number) typeVal).intValue());
+
                     ServerHttpRequest mutated = request.mutate()
                             .header(AuthConstant.HEADER_X_USER_ID, uIdStr)
                             .header(AuthConstant.HEADER_X_USER_NAME, uName)
                             .header(AuthConstant.HEADER_X_REAL_NAME, realName)
+                            .header(AuthConstant.HEADER_X_USER_TYPE, uType)
                             .build();
                     ServerWebExchange mutatedExchange = exchange.mutate().request(mutated).build();
                     return stringRedisTemplate.expire(redisKey,

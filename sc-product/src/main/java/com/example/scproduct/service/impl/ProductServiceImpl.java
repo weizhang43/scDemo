@@ -8,18 +8,17 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.curry.model.Product;
+import com.example.scproduct.auth.AudienceScope;
 import com.example.scproduct.es.ProductDescEsService;
 import com.example.scproduct.mapper.ProductMapper;
 import com.example.scproduct.service.ProductService;
+import com.example.scproduct.service.PromotionService;
 import com.example.scproduct.vo.ProductExportVO;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
-import org.redisson.api.RBucket;
 import org.redisson.api.RMap;
-import org.redisson.api.RScript;
 import org.redisson.api.RSet;
 import org.redisson.api.RedissonClient;
-import org.redisson.client.codec.StringCodec;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +28,8 @@ import javax.servlet.http.HttpServletResponse;
 import java.io.FileOutputStream;
 import java.net.URLEncoder;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
@@ -49,34 +50,16 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
     @Autowired
     private ProductDescEsService productDescEsService;
 
+    @Autowired
+    private PromotionService promotionService;
+
     /** 商品点赞数缓存：Redis Hash，field=商品ID，value=当前总点赞数（含未落库部分），作为权威值 */
     private static final String LIKE_COUNT_KEY = "product:like:count";
     /** 待落库商品ID集合：记录点赞数发生变化、需回写 DB 的商品 */
     private static final String LIKE_DIRTY_KEY = "product:like:dirty";
 
-    /** 秒杀库存 key 前缀：seckill:stock:{pId}，String 类型 */
-    private static final String SECKILL_STOCK_KEY = "seckill:stock:";
-    /** 秒杀已购用户集合 key 前缀：seckill:bought:{pId}，Set 类型，用于一人一单 */
-    private static final String SECKILL_BOUGHT_KEY = "seckill:bought:";
-
-    /**
-     * 秒杀预扣 Lua：原子完成 一人一单校验 + 余量判断 + 扣减 + 记录已购。
-     * 返回：1 成功；0 售罄；-1 已参与；-2 库存未就绪。
-     */
-    private static final String SECKILL_LUA =
-            "local stock = redis.call('get', KEYS[1]) " +
-            "if stock == false then return -2 end " +
-            "if redis.call('sismember', KEYS[2], ARGV[1]) == 1 then return -1 end " +
-            "if tonumber(stock) <= 0 then return 0 end " +
-            "redis.call('decr', KEYS[1]) " +
-            "redis.call('sadd', KEYS[2], ARGV[1]) " +
-            "return 1";
-
-    /** 秒杀补偿 Lua：库存 +1 并移除已购标记 */
-    private static final String SECKILL_ROLLBACK_LUA =
-            "redis.call('incr', KEYS[1]) " +
-            "redis.call('srem', KEYS[2], ARGV[1]) " +
-            "return 1";
+    /** 上架状态：1-上架 0-下架 */
+    private static final int STATUS_ON_SALE = 1;
 
     /**
      * 演示链路：插入一条固定垃圾袋商品。
@@ -92,32 +75,79 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
     }
 
     @Override
-    public ResponseDto<Product> listExpiringSoon() {
-        return ResponseDto.success(productMapper.selectExpiringWithin(3));
+    public ResponseDto<Product> listExpiringSoon(AudienceScope scope) {
+        return ResponseDto.success(productMapper.selectExpiringWithin(3,
+                scope.getMerchantId(), scope.isOnSaleOnly()));
     }
 
     @Override
-    public ResponseDto<Product> listLowStock(int threshold) {
+    public ResponseDto<Product> listLowStock(int threshold, AudienceScope scope) {
         LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<Product>()
                 .lt(Product::getStock, threshold)
                 .orderByAsc(Product::getStock);
+        applyScope(wrapper, scope);
         return ResponseDto.success(productMapper.selectList(wrapper));
     }
 
     /**
-     * 按商品名关键字 + 价格区间分页查询，按价格倒序、ID 升序返回。
+     * 好评榜。点赞以 Redis 为权威、由定时任务回刷 DB，所以不能直接取 DB 的 top N：
+     * 先按 DB 点赞数过量取一批，合并 Redis 实时值后在内存里重排再截断。
+     * 也不能只读 Redis——like() 仅在首次点赞时把商品 seed 进 map，从未被点赞的商品不在其中。
+     * 点赞只增不减，故 DB 值恒为下界，误差仅限"一个回刷周期内涨幅足以挤进榜单、但原先在候选集之外"的商品。
      */
     @Override
-    public ResponseDto<Product> queryProduct(String key, int price, int pageNo, int pageSize) {
-        Page<Product> page = new Page<>(pageNo,pageSize);
-        LambdaQueryWrapper<Product> queryWrapper = new LambdaQueryWrapper<Product>()
-                .select(Product::getPId, Product::getPrice, Product::getPName, Product::getStock)
-                .like(Product::getPName,key)
-                .gt(Product::getPrice,price)
-                .orderByDesc(Product::getPrice)
+    public ResponseDto<Product> listLikeRank(int limit, AudienceScope scope) {
+        int candidateSize = Math.max(limit * 5, 50);
+        Page<Product> page = new Page<>(1, candidateSize);
+        LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<Product>()
+                .orderByDesc(Product::getLikeCount)
                 .orderByAsc(Product::getPId);
-        page = productMapper.selectPage(page,queryWrapper);
-        return ResponseDto.success(page);
+        applyScope(wrapper, scope);
+        List<Product> candidates = productMapper.selectPage(page, wrapper).getRecords();
+        mergeLikeCountFromRedis(candidates);
+        candidates.sort(Comparator
+                .comparing((Product p) -> p.getLikeCount() == null ? 0 : p.getLikeCount(),
+                        Comparator.reverseOrder())
+                .thenComparing(Product::getPId));
+        List<Product> top = candidates.size() > limit ? candidates.subList(0, limit) : candidates;
+        List<Product> result = new ArrayList<>(top);
+        promotionService.fillEffectivePrice(result);
+        return ResponseDto.success(result);
+    }
+
+    @Override
+    public ResponseDto<Product> listNewest(int limit, AudienceScope scope) {
+        Page<Product> page = new Page<>(1, limit);
+        LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<Product>()
+                .orderByDesc(Product::getPId);
+        applyScope(wrapper, scope);
+        List<Product> records = productMapper.selectPage(page, wrapper).getRecords();
+        promotionService.fillEffectivePrice(records);
+        return ResponseDto.success(records);
+    }
+
+    @Override
+    public Product getVisibleById(Integer id, AudienceScope scope) {
+        if (id == null) {
+            return null;
+        }
+        LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<Product>()
+                .eq(Product::getPId, id);
+        applyScope(wrapper, scope);
+        Product product = productMapper.selectOne(wrapper);
+        if (product != null) {
+            promotionService.fillEffectivePrice(Collections.singletonList(product));
+        }
+        return product;
+    }
+
+    @Override
+    public List<Product> listSellableByIds(List<Integer> ids) {
+        List<Product> products = productMapper.selectList(new LambdaQueryWrapper<Product>()
+                .in(Product::getPId, ids)
+                .eq(Product::getStatus, STATUS_ON_SALE));
+        promotionService.fillEffectivePrice(products);
+        return products;
     }
 
     /**
@@ -131,13 +161,32 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
                                          String origin,
                                          Integer isExpired,
                                          int pageNo,
-                                         int pageSize) {
+                                         int pageSize,
+                                         AudienceScope scope) {
         Page<Product> page = new Page<>(pageNo, pageSize);
         LambdaQueryWrapper<Product> queryWrapper = buildListWrapper(pName, proDesc, productionDateStart,
-                productionDateEnd, origin, isExpired);
+                productionDateEnd, origin, isExpired, scope);
         page = productMapper.selectPage(page, queryWrapper);
         mergeLikeCountFromRedis(page.getRecords());
+        promotionService.fillEffectivePrice(page.getRecords());
         return ResponseDto.success(page);
+    }
+
+    /**
+     * 按可见范围给查询 wrapper 追加过滤条件。内部调用与管理员不加任何条件。
+     */
+    private void applyScope(LambdaQueryWrapper<Product> wrapper, AudienceScope scope) {
+        if (scope == null || scope.isUnrestricted()) {
+            return;
+        }
+        if (scope.isOnSaleOnly()) {
+            wrapper.eq(Product::getStatus, STATUS_ON_SALE);
+        }
+        Integer merchantId = scope.getMerchantId();
+        if (merchantId != null) {
+            // merchant_id IS NULL 是存量公共商品，任何商家可见可管
+            wrapper.and(w -> w.eq(Product::getMerchantId, merchantId).or().isNull(Product::getMerchantId));
+        }
     }
 
     /**
@@ -151,7 +200,8 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
                                                          Date productionDateStart,
                                                          Date productionDateEnd,
                                                          String origin,
-                                                         Integer isExpired) {
+                                                         Integer isExpired,
+                                                         AudienceScope scope) {
         LambdaQueryWrapper<Product> queryWrapper = new LambdaQueryWrapper<Product>()
                 .like(pName != null && !pName.isEmpty(), Product::getPName, pName)
                 .ge(productionDateStart != null, Product::getProductionDate, productionDateStart)
@@ -159,6 +209,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
                 .eq(origin != null && !origin.isEmpty(), Product::getOrigin, origin)
                 .eq(isExpired != null, Product::getIsExpired, isExpired)
                 .orderByDesc(Product::getPId);
+        applyScope(queryWrapper, scope);
 
         boolean hasProDesc =  proDesc != null && !proDesc.trim().isEmpty();
         if (!hasProDesc) {
@@ -205,11 +256,69 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
 
     /**
      * 新增商品：根据生产日期+保质期自动计算 is_expired 字段后入库。
+     * 商家创建的商品盖上其 u_id 作为归属；管理员/内部调用创建的留 NULL 作公共商品。
      */
     @Override
-    public ResponseDto<Product> addOne(Product product) {
+    public ResponseDto<Product> addOne(Product product, AudienceScope scope) {
         refreshExpiredFlag(product);
+        product.setMerchantId(scope.getMerchantId());
+        product.setStatus(STATUS_ON_SALE);
         productMapper.insert(product);
+        return ResponseDto.success(null);
+    }
+
+    @Override
+    public ResponseDto<Product> updateOne(Product product, AudienceScope scope) {
+        if (product == null || product.getPId() == null) {
+            return ResponseDto.error("商品ID不能为空");
+        }
+        Product db = productMapper.selectById(product.getPId());
+        if (db == null) {
+            return ResponseDto.error("商品不存在");
+        }
+        if (!scope.canManage(db.getMerchantId())) {
+            return ResponseDto.error("无权修改该商品");
+        }
+        // 归属与上下架状态不走通用编辑：前者不可转让，后者有独立接口
+        product.setMerchantId(null);
+        product.setStatus(null);
+        return productMapper.updateById(product) > 0
+                ? ResponseDto.success(null)
+                : ResponseDto.error("修改商品失败");
+    }
+
+    @Override
+    public ResponseDto<Product> removeOne(Integer id, AudienceScope scope) {
+        if (id == null) {
+            return ResponseDto.error("商品ID不能为空");
+        }
+        Product db = productMapper.selectById(id);
+        if (db == null) {
+            return ResponseDto.error("商品不存在");
+        }
+        if (!scope.canManage(db.getMerchantId())) {
+            return ResponseDto.error("无权删除该商品");
+        }
+        return productMapper.deleteById(id) > 0
+                ? ResponseDto.success(null)
+                : ResponseDto.error("删除商品失败");
+    }
+
+    @Override
+    public ResponseDto<Product> setShelfStatus(Integer id, Integer status, AudienceScope scope) {
+        if (id == null || status == null || (status != 0 && status != STATUS_ON_SALE)) {
+            return ResponseDto.error("参数非法：status 只能为 0 或 1");
+        }
+        Product db = productMapper.selectById(id);
+        if (db == null) {
+            return ResponseDto.error("商品不存在");
+        }
+        if (!scope.canManage(db.getMerchantId())) {
+            return ResponseDto.error("无权操作该商品");
+        }
+        productMapper.update(null, new LambdaUpdateWrapper<Product>()
+                .eq(Product::getPId, id)
+                .set(Product::getStatus, status));
         return ResponseDto.success(null);
     }
 
@@ -222,16 +331,14 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
         if (id == null) {
             return ResponseDto.error("商品ID不能为空");
         }
+        Product db = getVisibleById(id, AudienceScope.customer());
+        if (db == null) {
+            return ResponseDto.error("点赞失败：商品不存在或已下架");
+        }
         try {
             RMap<Integer, Long> countMap = redissonClient.getMap(LIKE_COUNT_KEY);
             // 首次点赞该商品时，用 DB 现值给 Redis 播种，之后 Redis 即为权威值
-            if (!countMap.containsKey(id)) {
-                Product db = getById(id);
-                if (db == null) {
-                    return ResponseDto.error("点赞失败：商品不存在");
-                }
-                countMap.putIfAbsent(id, db.getLikeCount() == null ? 0L : db.getLikeCount().longValue());
-            }
+            countMap.putIfAbsent(id, db.getLikeCount() == null ? 0L : db.getLikeCount().longValue());
             long newCount = countMap.addAndGet(id, 1L);
             redissonClient.getSet(LIKE_DIRTY_KEY).add(id);
             Product vo = new Product();
@@ -287,67 +394,6 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
             }
         }
         return flushed;
-    }
-
-    /**
-     * 秒杀预扣库存：Redis 无库存时懒加载 DB 并校验是否可秒杀；以 Lua 脚本原子完成一人一单校验+扣减+已购记录。
-     * @return code=200 预扣成功；非 200 为失败原因（已售罄/已参与/未就绪/商品不存在等）
-     */
-    @Override
-    public ResponseDto<Product> seckillPreDeduct(Integer pId, Integer uId) {
-        if (pId == null || uId == null) {
-            return ResponseDto.error("参数不能为空");
-        }
-        String stockKey = SECKILL_STOCK_KEY + pId;
-        String boughtKey = SECKILL_BOUGHT_KEY + pId;
-        // 懒加载播种：Redis 无库存时从 DB 载入并校验是否可秒杀
-        RBucket<String> stockBucket = redissonClient.getBucket(stockKey, StringCodec.INSTANCE);
-        if (!stockBucket.isExists()) {
-            Product db = getById(pId);
-            if (db == null) {
-                return ResponseDto.error("商品不可秒杀：商品不存在");
-            }
-            if (db.getIsExpired() != null && db.getIsExpired() == 1) {
-                return ResponseDto.error("商品不可秒杀：已过期");
-            }
-            int stock = db.getStock() == null ? 0 : db.getStock();
-            if (stock < 1) {
-                return ResponseDto.error("已售罄");
-            }
-            // trySet 即 SETNX，并发下只有首个线程播种成功，其余直接进入 Lua
-            stockBucket.trySet(String.valueOf(stock));
-        }
-        List<Object> keys = new ArrayList<>();
-        keys.add(stockKey);
-        keys.add(boughtKey);
-        Long code = redissonClient.getScript(StringCodec.INSTANCE).eval(
-                RScript.Mode.READ_WRITE, SECKILL_LUA, RScript.ReturnType.INTEGER,
-                keys, String.valueOf(uId));
-        long r = code == null ? 0L : code;
-        if (r == 1L) {
-            return ResponseDto.success(null);
-        }
-        if (r == -1L) {
-            return ResponseDto.error("您已参与过该商品秒杀");
-        }
-        if (r == -2L) {
-            return ResponseDto.error("秒杀未就绪，请稍后重试");
-        }
-        return ResponseDto.error("已售罄");
-    }
-
-    @Override
-    public ResponseDto<Product> rollbackSeckillStock(Integer pId, Integer uId) {
-        if (pId == null || uId == null) {
-            return ResponseDto.error("参数不能为空");
-        }
-        List<Object> keys = new ArrayList<>();
-        keys.add(SECKILL_STOCK_KEY + pId);
-        keys.add(SECKILL_BOUGHT_KEY + pId);
-        redissonClient.getScript(StringCodec.INSTANCE).eval(
-                RScript.Mode.READ_WRITE, SECKILL_ROLLBACK_LUA, RScript.ReturnType.INTEGER,
-                keys, String.valueOf(uId));
-        return ResponseDto.success(null);
     }
 
     @Override
@@ -477,9 +523,10 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
                        Date productionDateEnd,
                        String origin,
                        Integer isExpired,
+                       AudienceScope scope,
                        HttpServletResponse response) throws Exception {
         LambdaQueryWrapper<Product> queryWrapper = buildListWrapper(pName, proDesc, productionDateStart,
-                productionDateEnd, origin, isExpired);
+                productionDateEnd, origin, isExpired, scope);
         List<Product> list = productMapper.selectList(queryWrapper);
         List<ProductExportVO> rows = new java.util.ArrayList<>();
         for (int i = 0; i < list.size(); i++) {
@@ -555,13 +602,24 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
     }
 
     @Override
-    public ResponseDto<Product> addStock(List<Product> products) {
+    public ResponseDto<Product> addStock(List<Product> products, AudienceScope scope) {
+        if (products == null || products.isEmpty()) {
+            return ResponseDto.error("补货商品列表为空");
+        }
+        if (!scope.isUnrestricted()) {
+            List<Integer> ids = products.stream().map(Product::getPId).collect(Collectors.toList());
+            for (Product db : productMapper.selectBatchIds(ids)) {
+                if (!scope.canManage(db.getMerchantId())) {
+                    return ResponseDto.error("无权操作商品：" + db.getPName());
+                }
+            }
+        }
         productMapper.batchUpdateStock(products);
         return ResponseDto.success(null);
     }
 
     private LambdaQueryWrapper<Product> buildExportWrapper(ProductExportQuery q) {
         return buildListWrapper(q.getpName(), q.getProDesc(), q.getProductionDateStart(),
-                q.getProductionDateEnd(), q.getOrigin(), q.getIsExpired());
+                q.getProductionDateEnd(), q.getOrigin(), q.getIsExpired(), q.getScope());
     }
 }

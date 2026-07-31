@@ -6,6 +6,8 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.curry.model.Order;
 import com.curry.model.Product;
 import com.curry.model.annotation.OpLog;
+import com.curry.model.auth.AuthConstant;
+import com.example.scorder.auth.OrderScopeResolver;
 import com.example.scorder.config.OrderConfig;
 import com.example.scorder.dto.PlaceOrderRequest;
 import com.example.scorder.dto.SeckillRequest;
@@ -24,7 +26,6 @@ import javax.servlet.http.HttpServletResponse;
 import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.Date;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -47,6 +48,20 @@ public class OrderController {
     @GetMapping("/warning/timeout")
     public ResponseDto<com.example.scorder.vo.OrderTimeoutVO> timeoutWarning() {
         return orderService.listTimeoutWarning();
+    }
+
+    /** 顾客首页：只看自己的即将超期订单，下单人取网关注入的用户名 */
+    @GetMapping("/warning/timeout/mine")
+    public ResponseDto<com.example.scorder.vo.OrderTimeoutVO> myTimeoutWarning(
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_NAME, required = false) String uName) {
+        return orderService.listMyTimeoutWarning(uName);
+    }
+
+    /** 顾客首页：商品销量榜 */
+    @GetMapping("/rank/sales")
+    public ResponseDto<com.example.scorder.vo.ProductSalesRankVO> salesRank(
+            @RequestParam(value = "limit", defaultValue = "10") int limit) {
+        return orderService.listSalesRank(Math.min(Math.max(limit, 1), 50));
     }
 
     /** requestId 幂等键 TTL */
@@ -75,25 +90,18 @@ public class OrderController {
     }
 
     /**
-     * 按主键查询订单。
+     * 按主键查询订单。顾客访问他人订单时返回 null（200 空 body），前端落到"未找到订单信息"。
      */
     @GetMapping("/{id}")
     public Order get(@PathVariable("id") Integer id) {
-        return orderService.getById(id);
-    }
-
-    /**
-     * 查询全部订单列表。
-     */
-    @GetMapping("/list")
-    public List<Order> list() {
-        return orderService.list();
+        return orderService.getVisibleById(id, OrderScopeResolver.current());
     }
 
 
     /**
      * 分页查询订单：支持关键字、订单号、创建时间区间过滤。
      * 被 Sentinel 资源 order-queryOrder 限流，触发限流时走 queryOrderBlockHandler 返回兜底数据。
+     * 方法签名不能变 —— blockHandler 要求参数列表逐一匹配，scope 只能在方法体内解析。
      */
     @GetMapping("/queryOrder")
     @SentinelResource(value = "order-queryOrder",blockHandler = "queryOrderBlockHandler")
@@ -106,7 +114,8 @@ public class OrderController {
                                          @DateTimeFormat(pattern = "yyyy-MM-dd") Date createTimeEnd,
                                          @RequestParam(value = "pageNo", defaultValue = "1") int pageNo,
                                          @RequestParam(value = "pageSize", defaultValue = "10") int pageSize) {
-        return orderService.queryOrder(key, orderNo, orderStatus, createTimeStart, createTimeEnd, pageNo, pageSize);
+        return orderService.queryOrder(key, orderNo, orderStatus, createTimeStart, createTimeEnd, pageNo, pageSize,
+                OrderScopeResolver.current());
     }
 
     /**
@@ -119,7 +128,8 @@ public class OrderController {
                                                       @DateTimeFormat(pattern = "yyyy-MM-dd") Date createTimeStart,
                                                       @RequestParam(value = "createTimeEnd", required = false)
                                                       @DateTimeFormat(pattern = "yyyy-MM-dd") Date createTimeEnd) {
-        return ResponseDto.success(orderService.countByStatus(key, orderNo, createTimeStart, createTimeEnd));
+        return ResponseDto.success(orderService.countByStatus(key, orderNo, createTimeStart, createTimeEnd,
+                OrderScopeResolver.current()));
     }
 
 
@@ -156,16 +166,7 @@ public class OrderController {
                        @RequestParam(value = "createTimeEnd", required = false)
                        @DateTimeFormat(pattern = "yyyy-MM-dd") Date createTimeEnd,
                        HttpServletResponse response) throws Exception {
-        orderService.export(key, orderNo, createTimeStart, createTimeEnd, response);
-    }
-
-    /**
-     * 批量下单
-     */
-    @PostMapping("/placeOrder")
-    public ResponseDto<Order> placeOrder(@RequestBody List<Product> products,
-                                         @RequestParam(value = "addPerson", required = false) String addPerson) {
-        return orderService.placeOrder(products, addPerson);
+        orderService.export(key, orderNo, createTimeStart, createTimeEnd, OrderScopeResolver.current(), response);
     }
 
     /**
@@ -178,7 +179,7 @@ public class OrderController {
     }
 
     /**
-     * 秒杀下单：Redis 预扣 → 异步落库，立即返回结果状态
+     * 秒杀下单：Redis 预扣活动名额 → 异步落库，立即返回结果状态
      */
     @OpLog(module = "订单管理", type = OpLog.OpType.ADD, description = "秒杀下单")
     @PostMapping("/seckill")
@@ -191,8 +192,8 @@ public class OrderController {
      */
     @GetMapping("/seckill/result")
     public ResponseDto<SeckillResultVO> seckillResult(@RequestParam("uId") Integer uId,
-                                                      @RequestParam("pId") Integer pId) {
-        return ResponseDto.success(orderService.seckillResult(uId, pId));
+                                                      @RequestParam("activityId") Integer activityId) {
+        return ResponseDto.success(orderService.seckillResult(uId, activityId));
     }
 
     /**
@@ -219,7 +220,7 @@ public class OrderController {
                 return ResponseDto.error("请求正在处理，请勿重复提交");
             }
         }
-        return orderService.updateStatus(id, orderStatus);
+        return orderService.updateStatus(id, orderStatus, OrderScopeResolver.current());
     }
 
     /**
@@ -228,6 +229,6 @@ public class OrderController {
     @OpLog(module = "订单管理", type = OpLog.OpType.DELETE, description = "删除订单")
     @DeleteMapping("/{id}")
     public ResponseDto<Order> delete(@PathVariable("id") Integer id) {
-        return orderService.removeOrder(id);
+        return orderService.removeOrder(id, OrderScopeResolver.current());
     }
 }

@@ -4,6 +4,8 @@ import com.alibaba.csp.sentinel.annotation.SentinelResource;
 import com.alibaba.csp.sentinel.slots.block.BlockException;
 import com.curry.model.Product;
 import com.curry.model.annotation.OpLog;
+import com.example.scproduct.auth.AudienceResolver;
+import com.example.scproduct.auth.AudienceScope;
 import com.example.scproduct.service.ExportTaskService;
 import com.example.scproduct.service.ProductService;
 import com.example.scproduct.vo.ExportTaskVO;
@@ -43,13 +45,25 @@ public class ProductController {
     /** 首页预警：三个月内即将过期的商品 */
     @GetMapping("/warning/expiring")
     public ResponseDto<Product> expiringSoon() {
-        return productService.listExpiringSoon();
+        return productService.listExpiringSoon(AudienceResolver.current());
     }
 
     /** 首页预警：库存不足的商品（阈值默认 100） */
     @GetMapping("/warning/lowStock")
     public ResponseDto<Product> lowStock(@RequestParam(value = "threshold", defaultValue = "100") Integer threshold) {
-        return productService.listLowStock(threshold);
+        return productService.listLowStock(threshold, AudienceResolver.current());
+    }
+
+    /** 顾客首页：好评榜，按点赞数倒序 */
+    @GetMapping("/rank/likes")
+    public ResponseDto<Product> likeRank(@RequestParam(value = "limit", defaultValue = "10") int limit) {
+        return productService.listLikeRank(Math.min(Math.max(limit, 1), 50), AudienceResolver.current());
+    }
+
+    /** 顾客首页：上新货物 */
+    @GetMapping("/rank/newest")
+    public ResponseDto<Product> newest(@RequestParam(value = "limit", defaultValue = "8") int limit) {
+        return productService.listNewest(Math.min(Math.max(limit, 1), 50), AudienceResolver.current());
     }
 
 
@@ -73,57 +87,51 @@ public class ProductController {
     }
 
     /**
-     * 按主键查询商品。
+     * 按主键查询商品。顾客访问已下架商品、商家访问他人商品均视为不存在。
      */
     @GetMapping("/{id}")
     public Product get(@PathVariable("id") Integer id) {
-        return productService.getById(id);
+        return productService.getVisibleById(id, AudienceResolver.current());
     }
 
     /**
-     * 查询全部商品列表。
+     * 根据 ID 列表批量查「可售」商品：已下架的不会返回。
+     * 顾客侧榜单与下单取价都走这里，避免下架商品漏出。
      */
-    @GetMapping("/list")
-    public List<Product> list() {
-        return productService.list();
-    }
-
-    /**
-     * 根据 ID 列表批量查商品
-     */
-    @GetMapping("/listByIds")
-    public ResponseDto<Product> listByIds(@RequestParam("ids") List<Integer> ids) {
+    @GetMapping("/listSellableByIds")
+    public ResponseDto<Product> listSellableByIds(@RequestParam("ids") List<Integer> ids) {
         if (ids == null || ids.isEmpty()) {
             return ResponseDto.success(null);
         }
-        return ResponseDto.success(productService.listByIds(ids));
+        return ResponseDto.success(productService.listSellableByIds(ids));
     }
 
     /**
-     * 按主键更新商品信息。
+     * 按主键更新商品信息（含补货）。归属校验不通过时拒绝。
      */
     @OpLog(module = "商品管理", type = OpLog.OpType.UPDATE, description = "修改商品")
     @PutMapping
-    public boolean update(@RequestBody Product product) {
-        return productService.updateById(product);
+    public ResponseDto<Product> update(@RequestBody Product product) {
+        return productService.updateOne(product, AudienceResolver.current());
     }
 
     /**
-     * 按主键删除商品。
+     * 上架 / 下架商品。下架后顾客端一律查不到。
+     */
+    @OpLog(module = "商品管理", type = OpLog.OpType.UPDATE, description = "商品上下架")
+    @PutMapping("/shelf/{id}")
+    public ResponseDto<Product> shelf(@PathVariable("id") Integer id,
+                                      @RequestParam("status") Integer status) {
+        return productService.setShelfStatus(id, status, AudienceResolver.current());
+    }
+
+    /**
+     * 按主键删除商品。归属校验不通过时拒绝。
      */
     @OpLog(module = "商品管理", type = OpLog.OpType.DELETE, description = "删除商品")
     @DeleteMapping("/{id}")
-    public boolean delete(@PathVariable("id") Integer id) {
-        return productService.removeById(id);
-    }
-
-
-    /**
-     * 商品查询（简易版）：按关键字、价格等过滤分页返回。
-     */
-    @GetMapping("/queryProduct")
-    public ResponseDto<Product> queryProduct(String key,int price,int pageNo,int pageSize) {
-        return productService.queryProduct(key,price,pageNo,pageSize);
+    public ResponseDto<Product> delete(@PathVariable("id") Integer id) {
+        return productService.removeOne(id, AudienceResolver.current());
     }
 
     /**
@@ -142,7 +150,8 @@ public class ProductController {
                                           @RequestParam(value = "isExpired", required = false) Integer isExpired,
                                           @RequestParam(value = "pageNo", defaultValue = "1") int pageNo,
                                           @RequestParam(value = "pageSize", defaultValue = "10") int pageSize) {
-        return productService.pageQuery(pName, proDesc, productionDateStart, productionDateEnd, origin, isExpired, pageNo, pageSize);
+        return productService.pageQuery(pName, proDesc, productionDateStart, productionDateEnd, origin, isExpired,
+                pageNo, pageSize, AudienceResolver.current());
     }
 
     /**
@@ -160,7 +169,7 @@ public class ProductController {
     @OpLog(module = "商品管理", type = OpLog.OpType.ADD, description = "新增商品")
     @PostMapping("/add")
     public ResponseDto<Product> add(@RequestBody Product product) {
-        return productService.addOne(product);
+        return productService.addOne(product, AudienceResolver.current());
     }
 
     /**
@@ -169,24 +178,6 @@ public class ProductController {
     @PostMapping("/like/{id}")
     public ResponseDto<Product> like(@PathVariable("id") Integer id) {
         return productService.like(id);
-    }
-
-    /**
-     * 秒杀预扣库存（Redis 原子，一人一单）
-     */
-    @PostMapping("/seckill/preDeduct")
-    public ResponseDto<Product> seckillPreDeduct(@RequestParam("pId") Integer pId,
-                                                 @RequestParam("uId") Integer uId) {
-        return productService.seckillPreDeduct(pId, uId);
-    }
-
-    /**
-     * 秒杀补偿：回滚 Redis 预扣库存（落库失败时调用）
-     */
-    @PostMapping("/seckill/rollback")
-    public ResponseDto<Product> seckillRollback(@RequestParam("pId") Integer pId,
-                                                @RequestParam("uId") Integer uId) {
-        return productService.rollbackSeckillStock(pId, uId);
     }
 
     /**
@@ -203,7 +194,7 @@ public class ProductController {
     @PostMapping("/addStock")
     public ResponseDto<Product> addStock(@RequestBody List<Product> products) {
         try{
-            return productService.addStock(products);
+            return productService.addStock(products, AudienceResolver.current());
         }catch (Exception e){
             return ResponseDto.error("修改库存失败");
         }
@@ -231,7 +222,8 @@ public class ProductController {
                        @RequestParam(value = "origin", required = false) String origin,
                        @RequestParam(value = "isExpired", required = false) Integer isExpired,
                        HttpServletResponse response) throws Exception {
-        productService.export(pName, proDesc, productionDateStart, productionDateEnd, origin, isExpired, response);
+        productService.export(pName, proDesc, productionDateStart, productionDateEnd, origin, isExpired,
+                AudienceResolver.current(), response);
     }
 
     /**
@@ -246,8 +238,10 @@ public class ProductController {
                                              @DateTimeFormat(pattern = "yyyy-MM-dd") Date productionDateEnd,
                                              @RequestParam(value = "origin", required = false) String origin,
                                              @RequestParam(value = "isExpired", required = false) Integer isExpired) {
+        // 异步导出跑在线程池里取不到请求头，scope 必须在此解析后随查询条件带下去
+        AudienceScope scope = AudienceResolver.current();
         ProductService.ProductExportQuery query = new ProductService.ProductExportQuery(
-                pName, proDesc, productionDateStart, productionDateEnd, origin, isExpired);
+                pName, proDesc, productionDateStart, productionDateEnd, origin, isExpired, scope);
         ExportTaskVO vo = exportTaskService.submit(query);
         return ResponseDto.success(vo);
     }

@@ -45,7 +45,8 @@ public class UserController {
             @SuppressWarnings("unchecked")
             Map<String, Object> data = (Map<String, Object>) result.getDaoResult();
             User user = (User) data.get("user");
-            String token = tokenService.issue(LoginUser.of(user.getUId(), user.getUName(), user.getRealName()));
+            String token = tokenService.issue(LoginUser.of(user.getUId(), user.getUName(),
+                    user.getRealName(), user.getUType()));
             data.put("token", token);
             data.put("tokenType", "Bearer");
         }
@@ -65,7 +66,8 @@ public class UserController {
     @GetMapping("/me")
     public ResponseDto<User> me(@RequestHeader(value = AuthConstant.HEADER_X_USER_ID, required = false) Integer uId,
                                 @RequestHeader(value = AuthConstant.HEADER_X_USER_NAME, required = false) String uName,
-                                @RequestHeader(value = AuthConstant.HEADER_X_REAL_NAME, required = false) String realName) {
+                                @RequestHeader(value = AuthConstant.HEADER_X_REAL_NAME, required = false) String realName,
+                                @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer uType) {
         if (uId == null) {
             return ResponseDto.error("未登录");
         }
@@ -73,6 +75,7 @@ public class UserController {
         data.put("uId", uId);
         data.put("uName", uName);
         data.put("realName", realName);
+        data.put("uType", uType);
         return ResponseDto.success(data);
     }
 

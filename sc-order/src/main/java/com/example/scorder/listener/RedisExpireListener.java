@@ -12,8 +12,6 @@ import org.springframework.stereotype.Component;
 
 import javax.annotation.PostConstruct;
 
-import static com.example.scorder.service.impl.OrderServiceImpl.CANCEL_ORDER_STATUS;
-
 @Component
 @Slf4j
 public class RedisExpireListener {
@@ -34,7 +32,7 @@ public class RedisExpireListener {
         topic.addListener(String.class, (pattern, channel, expiredKey) -> {
             if (expiredKey != null && expiredKey.startsWith(EXPIRED_KEY_PREFIX)) {
                 String orderId = expiredKey.substring(EXPIRED_KEY_PREFIX.length());
-                Object result = orderService.updateStatus(Integer.parseInt(orderId), CANCEL_ORDER_STATUS);
+                Object result = orderService.cancelUnSubmitted(Integer.parseInt(orderId));
                 log.info("订单超时未提交，自动取消 orderId={}, result={}",orderId,result);
             }
         });

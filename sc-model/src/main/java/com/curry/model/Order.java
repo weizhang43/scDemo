@@ -23,6 +23,10 @@ public class Order {
     @TableField("add_person")
     private String addPerson;
 
+    /** 下单顾客ID。历史订单回填不到时为 null，顾客一律查不到 */
+    @TableField("u_id")
+    private Integer uId;
+
     @TableField("create_time")
     private Date createTime;
 

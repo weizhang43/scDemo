@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.curry.model.*;
+import com.example.scorder.auth.OrderScope;
 import com.example.scorder.config.RabbitMqConfig;
 import com.example.scorder.dto.PlaceOrderRequest;
 import com.example.scorder.dto.SeckillRequest;
@@ -19,6 +20,7 @@ import com.example.scorder.service.OrderService;
 import com.example.scorder.service.UserFeignService;
 import com.example.scorder.vo.OrderExportVO;
 import com.example.scorder.vo.OrderTimeoutVO;
+import com.example.scorder.vo.ProductSalesRankVO;
 import com.example.scorder.vo.SeckillResultVO;
 import io.seata.spring.annotation.GlobalTransactional;
 import lombok.extern.slf4j.Slf4j;
@@ -33,6 +35,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.util.StringUtils;
 import response.ResponseDto;
 
 import javax.servlet.http.HttpServletResponse;
@@ -74,7 +77,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     @Autowired
     private RabbitTemplate rabbitTemplate;
 
-    /** 秒杀结果 key 前缀：seckill:result:{uId}:{pId} */
+    /** 秒杀结果 key 前缀：seckill:result:{uId}:{activityId} */
     private static final String SECKILL_RESULT_KEY = "seckill:result:";
 
     /**
@@ -117,11 +120,28 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
     @Override
     public ResponseDto<OrderTimeoutVO> listTimeoutWarning() {
+        return ResponseDto.success(buildTimeoutWarning(null));
+    }
+
+    @Override
+    public ResponseDto<OrderTimeoutVO> listMyTimeoutWarning(String uName) {
+        // uName 为空时 MP 会跳过该条件，本接口会退化成返回全量订单，必须显式拒绝
+        if (!StringUtils.hasText(uName)) {
+            return ResponseDto.error("未登录");
+        }
+        return ResponseDto.success(buildTimeoutWarning(uName));
+    }
+
+    /**
+     * 查询待付款订单并补出到期时间。addPerson 非空时只查该下单人（t_order.add_person 存的是 uName）。
+     */
+    private List<OrderTimeoutVO> buildTimeoutWarning(String addPerson) {
         LambdaQueryWrapper<Order> wrapper = new LambdaQueryWrapper<Order>()
-                .eq(Order::getOrderStatus, 0)
+                .eq(Order::getOrderStatus, UN_COMMIT_ORDER_STATUS)
+                .eq(StringUtils.hasText(addPerson), Order::getAddPerson, addPerson)
                 .orderByAsc(Order::getCreateTime);
         List<Order> orders = orderMapper.selectList(wrapper);
-        List<OrderTimeoutVO> list = orders.stream().map(o -> {
+        return orders.stream().map(o -> {
             OrderTimeoutVO vo = new OrderTimeoutVO();
             vo.setOId(o.getOId());
             vo.setOrderNo(o.getOrderNo());
@@ -133,17 +153,61 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             }
             return vo;
         }).collect(Collectors.toList());
-        return ResponseDto.success(list);
+    }
+
+    @Override
+    public ResponseDto<ProductSalesRankVO> listSalesRank(int limit) {
+        List<ProductSalesRankVO> rank = new ArrayList<>();
+        for (Map<String, Object> row : orderItemMapper.selectSalesRank(limit)) {
+            ProductSalesRankVO vo = new ProductSalesRankVO();
+            vo.setPId(row.get("pId") == null ? null : ((Number) row.get("pId")).intValue());
+            vo.setPName((String) row.get("pName"));
+            vo.setSalesCount(row.get("salesCount") == null ? 0L : ((Number) row.get("salesCount")).longValue());
+            rank.add(vo);
+        }
+        if (rank.isEmpty()) {
+            // 传空列表会生成 IN ()，直接短路
+            return ResponseDto.success(rank);
+        }
+        // 补当前价格与图片；补不到就只展示名称+销量，不因下游异常让整个榜单失败
+        try {
+            List<Integer> pIds = rank.stream().map(ProductSalesRankVO::getPId).collect(Collectors.toList());
+            ResponseDto<Product> prodResp = orderFeignService.listSellableByIds(pIds);
+            if (prodResp != null && prodResp.getCode() != null && prodResp.getCode() == 200
+                    && prodResp.getDataList() != null) {
+                Map<Integer, Product> prodMap = new HashMap<>();
+                for (Product p : prodResp.getDataList()) {
+                    if (p.getPId() != null) prodMap.put(p.getPId(), p);
+                }
+                // listSellableByIds 只返回上架商品，查不到即已下架 —— 顾客首页要看不到
+                List<ProductSalesRankVO> sellableRank = new ArrayList<>();
+                for (ProductSalesRankVO vo : rank) {
+                    Product p = prodMap.get(vo.getPId());
+                    if (p == null) continue;
+                    vo.setPrice(p.getPrice());
+                    vo.setImageUrl(p.getImageUrl());
+                    vo.setDiscount(p.getDiscount());
+                    vo.setEffectivePrice(effectivePriceOf(p));
+                    if (p.getPName() != null) vo.setPName(p.getPName());
+                    sellableRank.add(vo);
+                }
+                rank = sellableRank;
+            }
+        } catch (Exception e) {
+            log.warn("[salesRank] 拉取商品价格/图片失败, err={}", e.getMessage());
+        }
+        return ResponseDto.success(rank);
     }
 
 
     /**
      * 按关键字/订单号/创建时间区间分页查询订单，按创建时间与主键倒序返回。
+     * scope 为顾客时追加 u_id 归属过滤。
      */
     @Override
-    public ResponseDto<Order> queryOrder(String key, String orderNo, Integer orderStatus, Date createTimeStart, Date createTimeEnd, int pageNo, int pageSize) {
+    public ResponseDto<Order> queryOrder(String key, String orderNo, Integer orderStatus, Date createTimeStart, Date createTimeEnd, int pageNo, int pageSize, OrderScope scope) {
         Page<Order> page = new Page<>(pageNo, pageSize);
-        orderMapper.selectPageWithUserName(page, key, orderNo, orderStatus, createTimeStart, createTimeEnd);
+        orderMapper.selectPageWithUserName(page, key, orderNo, orderStatus, createTimeStart, createTimeEnd, scope.getOwnerUId());
         return ResponseDto.success(page);
     }
 
@@ -151,13 +215,13 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
      * 统计各订单状态数量：无论是否有该状态订单，均返回 -1/0/1/2 四个 key，缺省为 0。
      */
     @Override
-    public Map<String, Long> countByStatus(String key, String orderNo, Date createTimeStart, Date createTimeEnd) {
+    public Map<String, Long> countByStatus(String key, String orderNo, Date createTimeStart, Date createTimeEnd, OrderScope scope) {
         Map<String, Long> result = new HashMap<>();
         result.put(String.valueOf(UN_COMMIT_ORDER_STATUS), 0L);
         result.put(String.valueOf(PLACED_ORDER_STATUS), 0L);
         result.put(String.valueOf(COMPLETE_ORDER_STATUS), 0L);
         result.put(String.valueOf(CANCEL_ORDER_STATUS), 0L);
-        List<Map<String, Object>> rows = orderMapper.countGroupByStatus(key, orderNo, createTimeStart, createTimeEnd);
+        List<Map<String, Object>> rows = orderMapper.countGroupByStatus(key, orderNo, createTimeStart, createTimeEnd, scope.getOwnerUId());
         for (Map<String, Object> row : rows) {
             Object status = row.get("orderStatus");
             Object cnt = row.get("cnt");
@@ -174,8 +238,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
      * @param response Servlet 响应，文件名以 UTF-8 编码避免中文乱码
      */
     @Override
-    public void export(String key, String orderNo, Date createTimeStart, Date createTimeEnd, HttpServletResponse response) throws Exception {
+    public void export(String key, String orderNo, Date createTimeStart, Date createTimeEnd, OrderScope scope, HttpServletResponse response) throws Exception {
         LambdaQueryWrapper<Order> queryWrapper = new LambdaQueryWrapper<Order>()
+                .eq(scope.getOwnerUId() != null, Order::getUId, scope.getOwnerUId())
                 .like(key != null && !key.isEmpty(), Order::getAddPerson, key)
                 .like(orderNo != null && !orderNo.isEmpty(), Order::getOrderNo, orderNo)
                 .ge(createTimeStart != null, Order::getCreateTime, createTimeStart)
@@ -195,38 +260,6 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         EasyExcel.write(response.getOutputStream(), OrderExportVO.class)
                 .sheet("订单列表")
                 .doWrite(rows);
-    }
-
-    /**
-     * 批量下单（旧版）：远程扣减库存 + 本地写订单，订单金额为商品价格求和。
-     * 全程在 Seata 全局事务下，远程扣库存失败直接返回错误。
-     */
-    @Override
-    @GlobalTransactional
-    public ResponseDto<Order> placeOrder(List<Product> products, String addPerson) {
-        if (products == null || products.isEmpty()) {
-            return ResponseDto.error("下单商品列表为空");
-        }
-        // 远程调用扣减库存
-        ResponseDto<Product> deduct = orderFeignService.deductStock(products);
-        if (deduct != null && deduct.getCode() != null && deduct.getCode() != 200) {
-            return ResponseDto.error(deduct.getMsg() == null ? "扣减库存失败" : deduct.getMsg());
-        }
-        // 创建订单
-        Order order = new Order();
-        order.setAddPerson(addPerson == null || addPerson.isEmpty() ? "anonymous" : addPerson);
-        order.setCreateTime(new Date());
-        order.setProductList(products);
-        order.setOrderStatus(1);
-        order.setOrderNo(generateOrderNo());
-        // 订单金额：所选商品价格求和（Product.price 为 Integer）
-        BigDecimal amount = products.stream()
-                .filter(p -> p != null && p.getPrice() != null)
-                .map(p -> BigDecimal.valueOf(p.getPrice().doubleValue()))
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        order.setOrderAmount(amount);
-        orderMapper.insert(order);
-        return ResponseDto.success(null);
     }
 
     /**
@@ -278,7 +311,32 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
      * 任一步失败由 Seata 全局回滚保证最终一致。
      */
     private ResponseDto<Order> doPlaceOrder(PlaceOrderRequest request) {
-        // 1. 组装扣库存入参，并把前端传的 price/quantity 同步过去
+        // 1. 先拉服务端权威商品信息：已下架/已删除的直接拒单，同时拿到折后价与名称快照
+        List<Integer> pIds = new ArrayList<>();
+        for (PlaceOrderRequest.Item it : request.getItems()) {
+            pIds.add(it.getPId());
+        }
+        Map<Integer, Product> sellable = new HashMap<>();
+        ResponseDto<Product> prodResp = orderFeignService.listSellableByIds(pIds);
+        if (prodResp != null && prodResp.getCode() != null && prodResp.getCode() == 200
+                && prodResp.getDataList() != null) {
+            for (Product p : prodResp.getDataList()) {
+                if (p.getPId() != null) sellable.put(p.getPId(), p);
+            }
+        }
+        for (PlaceOrderRequest.Item it : request.getItems()) {
+            Product p = sellable.get(it.getPId());
+            if (p == null) {
+                return ResponseDto.error("商品已下架或不存在，无法下单");
+            }
+            // 前端展示价与服务端有效价不一致：促销恰在下单瞬间开始/结束，拒单让用户看到新价格
+            if (it.getExpectedPrice() != null
+                    && it.getExpectedPrice().compareTo(effectivePriceOf(p)) != 0) {
+                return ResponseDto.error("商品「" + p.getPName() + "」价格已更新，请刷新后重新下单");
+            }
+        }
+
+        // 2. 组装扣库存入参
         List<Product> deductItems = new ArrayList<>();
         for (PlaceOrderRequest.Item it : request.getItems()) {
             Product p = new Product();
@@ -292,7 +350,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             return ResponseDto.error(msg == null ? "扣减库存失败" : msg);
         }
 
-        // 2. 拉取收货地址快照
+        // 3. 拉取收货地址快照
         String orderAddress = "";
         if (request.getAddressId() != null) {
             try {
@@ -307,54 +365,37 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             }
         }
 
-        // 3. 创建订单
+        // 4. 创建订单
         Order order = new Order();
         order.setAddPerson(request.getAddPerson() == null || request.getAddPerson().isEmpty()
                 ? "anonymous" : request.getAddPerson());
+        order.setUId(request.getUId());
         order.setCreateTime(new Date());
         order.setOrderStatus(request.getOrderStatus());
         order.setOrderNo(generateOrderNo());
         order.setOrderAddress(orderAddress);
 
-        // 订单金额：sum(price * quantity)
+        // 订单金额：sum(服务端有效价 * quantity)，不采信前端传来的价格
         BigDecimal amount = BigDecimal.ZERO;
         for (PlaceOrderRequest.Item it : request.getItems()) {
-            BigDecimal price = it.getPrice() == null ? BigDecimal.ZERO
-                    : BigDecimal.valueOf(it.getPrice().doubleValue());
+            BigDecimal price = effectivePriceOf(sellable.get(it.getPId()));
             int qty = it.getQuantity() == null ? 0 : it.getQuantity();
             amount = amount.add(price.multiply(BigDecimal.valueOf(qty)));
         }
         order.setOrderAmount(amount);
         orderMapper.insert(order);
 
-        // 4. 写订单商品中间表
+        // 5. 写订单商品中间表，价格与名称均取服务端快照
         List<OrderItem> itemRecords = new ArrayList<>();
         for (PlaceOrderRequest.Item it : request.getItems()) {
+            Product p = sellable.get(it.getPId());
             OrderItem oi = new OrderItem();
             oi.setOId(order.getOId());
             oi.setPId(it.getPId());
             oi.setQuantity(it.getQuantity());
-            oi.setPrice(it.getPrice() == null ? null
-                    : BigDecimal.valueOf(it.getPrice().doubleValue()));
+            oi.setPrice(effectivePriceOf(p));
+            oi.setPName(p.getPName());
             itemRecords.add(oi);
-        }
-        // 批量补商品名称快照
-        List<Integer> pIds = new ArrayList<>();
-        for (PlaceOrderRequest.Item it : request.getItems()) pIds.add(it.getPId());
-        try {
-            ResponseDto<Product> prodResp = orderFeignService.listByIds(pIds);
-            if (prodResp != null && prodResp.getCode() != null && prodResp.getCode() == 200
-                    && prodResp.getDataList() != null) {
-                Map<Integer, String> nameMap = new HashMap<>();
-                for (Product p : prodResp.getDataList()) {
-                    if (p.getPId() != null) nameMap.put(p.getPId(), p.getPName());
-                }
-                for (OrderItem oi : itemRecords) {
-                    oi.setPName(nameMap.get(oi.getPId()));
-                }
-            }
-        } catch (Exception e) {
-            log.warn("拉取商品名称快照失败, err={}", e.getMessage());
         }
         if (!itemRecords.isEmpty()) {
             orderItemMapper.insertBatch(itemRecords);
@@ -368,6 +409,19 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
 
         return ResponseDto.success(order);
+    }
+
+    /**
+     * 商品的服务端有效单价：sc-product 已回填折后价则用它，否则退回原价。
+     */
+    private BigDecimal effectivePriceOf(Product p) {
+        if (p == null) {
+            return BigDecimal.ZERO;
+        }
+        if (p.getEffectivePrice() != null) {
+            return p.getEffectivePrice();
+        }
+        return p.getPrice() == null ? BigDecimal.ZERO : BigDecimal.valueOf(p.getPrice());
     }
 
     /**
@@ -399,34 +453,79 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     }
 
     /**
-     * 校验订单状态合法后基于 version CAS 更新状态。状态枚举：0 取消 / 1 已下单 / 2 已完成。
-     * 状态机：仅允许 1 已下单 → 0 取消、1 已下单 → 2 已完成。
-     * 取消分支不再同步调用 addStock，而是写入本地消息表 t_order_stock_restore_msg，
+     * 鉴权 + 目标状态校验后走 CAS 更新。状态枚举：-1 取消 / 0 待付款 / 1 已下单 / 2 已完成。
+     * 取消分支不同步调用 addStock，而是写入本地消息表 t_order_stock_restore_msg，
      * 由 StockRestoreMsgConsumer 异步消费回库存，避免 @GlobalTransactional 跨服务锁。
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public ResponseDto<Order> updateStatus(Integer id, Integer orderStatus) {
+    public ResponseDto<Order> updateStatus(Integer id, Integer orderStatus, OrderScope scope) {
         if (id == null) {
             return ResponseDto.error("订单ID不能为空");
         }
-        // 目标状态只允许 取消/已完成；传 1(已下单) 无意义且会误发通知邮件
-        if (!CANCEL_ORDER_STATUS.equals(orderStatus) && !COMPLETE_ORDER_STATUS.equals(orderStatus)) {
-            return ResponseDto.error("订单状态非法(0:订单取消 2:已完成)");
+        if (!CANCEL_ORDER_STATUS.equals(orderStatus)
+                && !PLACED_ORDER_STATUS.equals(orderStatus)
+                && !COMPLETE_ORDER_STATUS.equals(orderStatus)) {
+            return ResponseDto.error("订单状态非法(-1:订单取消 1:已支付 2:已完成)");
         }
         Order exists = orderMapper.selectById(id);
         if (exists == null) {
             return ResponseDto.error("订单不存在");
         }
+        // 越权与不存在返回同一句提示，避免顾客探测他人订单是否存在
+        if (!scope.canManage(exists.getUId())) {
+            return ResponseDto.error("订单不存在");
+        }
+        return doUpdateStatus(exists, orderStatus);
+    }
+
+    /**
+     * 超时取消：读到订单后再确认一次仍是待付款(0)。
+     * 顾客可能在延时消息到点前刚支付(0→1)，而状态机允许 1→-1，若不加这层判断会误杀已支付订单。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public ResponseDto<Order> cancelUnSubmitted(Integer id) {
+        if (id == null) {
+            return ResponseDto.error("订单ID不能为空");
+        }
+        Order exists = orderMapper.selectById(id);
+        if (exists == null) {
+            return ResponseDto.error("订单不存在");
+        }
+        if (!Objects.equals(exists.getOrderStatus(), UN_COMMIT_ORDER_STATUS)) {
+            log.info("订单 {} 当前状态为 {}，非待付款，跳过超时取消", id, exists.getOrderStatus());
+            return ResponseDto.success(null);
+        }
+        return doUpdateStatus(exists, CANCEL_ORDER_STATUS);
+    }
+
+    /**
+     * 状态流转白名单：0→1 支付、0→-1 取消、1→2 完成、1→-1 取消，其余一律拒绝。
+     * 支付(0→1)不触碰库存 —— 库存在下单时已扣减。
+     */
+    private boolean isTransitionAllowed(Integer currentStatus, Integer targetStatus) {
+        if (Objects.equals(currentStatus, UN_COMMIT_ORDER_STATUS)) {
+            return PLACED_ORDER_STATUS.equals(targetStatus) || CANCEL_ORDER_STATUS.equals(targetStatus);
+        }
+        if (Objects.equals(currentStatus, PLACED_ORDER_STATUS)) {
+            return COMPLETE_ORDER_STATUS.equals(targetStatus) || CANCEL_ORDER_STATUS.equals(targetStatus);
+        }
+        return false;
+    }
+
+    /**
+     * 状态流转核心：状态机校验 → CAS 更新 → 取消时写回库存本地消息 → 提交后发通知邮件。
+     * 调用方负责鉴权与目标状态合法性校验。
+     */
+    private ResponseDto<Order> doUpdateStatus(Order exists, Integer orderStatus) {
+        Integer id = exists.getOId();
         Integer currentStatus = exists.getOrderStatus();
-        // 状态机校验：「已下单(1)」可流转到「取消」或「已完成」；「未提交(0)」超时可流转到「取消」
-        boolean allowed = Objects.equals(currentStatus, PLACED_ORDER_STATUS)
-                || (Objects.equals(currentStatus, UN_COMMIT_ORDER_STATUS) && CANCEL_ORDER_STATUS.equals(orderStatus));
-        if (!allowed) {
-            // 已经是目标状态则视为幂等成功
-            if (Objects.equals(currentStatus, orderStatus)) {
-                return ResponseDto.success(null);
-            }
+        // 已经是目标状态则视为幂等成功
+        if (Objects.equals(currentStatus, orderStatus)) {
+            return ResponseDto.success(null);
+        }
+        if (!isTransitionAllowed(currentStatus, orderStatus)) {
             return ResponseDto.error("当前订单状态不允许该操作");
         }
         // CAS 更新：version + 前置状态双重校验，并发下只有一个请求成功
@@ -465,8 +564,12 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
     /**
      * 通过 MQ 发送订单状态变更邮件通知；发送失败仅记录日志，不影响主流程。
+     * 支付(→1)不发信 —— 只有取消与完成才需要通知。
      */
     private void toSendMail(String addPerson, String orderNo, Integer orderStatus) {
+        if (PLACED_ORDER_STATUS.equals(orderStatus)) {
+            return;
+        }
         String subject = "订单完成通知";
         String message = "您好，编号为【" + orderNo + "】的订单已经完成，可前往系统进行查看";
         if (CANCEL_ORDER_STATUS.equals(orderStatus)) {
@@ -514,35 +617,54 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     }
 
     /**
-     * 按主键删除订单，删除前校验订单是否存在。
+     * 按主键查询订单并做归属校验，无权时返回 null（与"不存在"同一表现，不暴露他人订单）。
      */
     @Override
-    public ResponseDto<Order> removeOrder(Integer id) {
+    public Order getVisibleById(Integer id, OrderScope scope) {
+        Order order = getById(id);
+        if (order == null || !scope.canManage(order.getUId())) {
+            return null;
+        }
+        return order;
+    }
+
+    /**
+     * 按主键删除订单：校验存在性与归属，且仅允许删除终态订单。
+     * 在途订单(0 待付款 / 1 已下单)不可删 —— 取消时写的回库存消息以 o_id 关联，
+     * 订单被删掉那批库存就再也回不来了。
+     */
+    @Override
+    public ResponseDto<Order> removeOrder(Integer id, OrderScope scope) {
         if (id == null) {
             return ResponseDto.error("订单ID不能为空");
         }
         Order exists = orderMapper.selectById(id);
-        if (exists == null) {
+        if (exists == null || !scope.canManage(exists.getUId())) {
             return ResponseDto.error("订单不存在");
+        }
+        Integer status = exists.getOrderStatus();
+        if (!CANCEL_ORDER_STATUS.equals(status) && !COMPLETE_ORDER_STATUS.equals(status)) {
+            return ResponseDto.error("仅已取消或已完成的订单可以删除");
         }
         int rows = orderMapper.deleteById(id);
         return rows > 0 ? ResponseDto.success(null) : ResponseDto.error("删除订单失败");
     }
 
     /**
-     * 秒杀下单同步段：参数校验 → 远程 Redis 原子预扣库存挡超卖 → 写 PENDING 结果到 Redis → 投递队列异步落库。
+     * 秒杀下单同步段：参数校验 → 远程 Redis 原子预扣名额挡超卖 → 写 PENDING 结果到 Redis → 投递队列异步落库。
      * 预扣失败为终态 FAILED，预扣成功立即返回 PENDING 供前端轮询。
      */
     @Override
     public ResponseDto<SeckillResultVO> seckill(SeckillRequest request) {
-        if (request == null || request.getuId() == null || request.getpId() == null) {
+        if (request == null || request.getuId() == null || request.getActivityId() == null) {
             return ResponseDto.error("参数不能为空");
         }
         if (request.getAddressId() == null) {
             return ResponseDto.error("请先维护默认收货地址");
         }
-        // 1. 远程 Redis 原子预扣库存（挡超卖、扛流量，失败不落库）
-        ResponseDto<Product> pre = orderFeignService.seckillPreDeduct(request.getpId(), request.getuId());
+        // 1. 远程 Redis 原子预扣名额（挡超卖、扛流量，失败不落库）。活动是否有效、是否在时间窗内由 sc-product 判定
+        ResponseDto<SeckillActivity> pre =
+                orderFeignService.seckillPreDeduct(request.getActivityId(), request.getuId());
         if (pre == null || pre.getCode() == null || pre.getCode() != 200) {
             String msg = pre == null ? "秒杀失败" : pre.getMsg();
             // 终态失败，无需轮询
@@ -550,7 +672,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
         // 2. 预扣成功 → 标记处理中并投递队列，异步落库
         SeckillResultVO pending = new SeckillResultVO("PENDING", "抢购成功，订单处理中", null);
-        saveSeckillResult(request.getuId(), request.getpId(), pending);
+        saveSeckillResult(request.getuId(), request.getActivityId(), pending);
         seckillOrderProducer.send(request);
         return ResponseDto.success(pending);
     }
@@ -559,11 +681,11 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
      * 供前端轮询查询秒杀结果：从 Redis 读取 PENDING/SUCCESS/FAILED，无记录返回 NONE。
      */
     @Override
-    public SeckillResultVO seckillResult(Integer uId, Integer pId) {
-        if (uId == null || pId == null) {
+    public SeckillResultVO seckillResult(Integer uId, Integer activityId) {
+        if (uId == null || activityId == null) {
             return new SeckillResultVO("FAILED", "参数不能为空", null);
         }
-        RBucket<SeckillResultVO> bucket = redissonClient.getBucket(SECKILL_RESULT_KEY + uId + ":" + pId);
+        RBucket<SeckillResultVO> bucket = redissonClient.getBucket(SECKILL_RESULT_KEY + uId + ":" + activityId);
         SeckillResultVO vo = bucket.get();
         // 结果已过期或从未发起
         return vo != null ? vo : new SeckillResultVO("NONE", "无秒杀记录", null);
@@ -577,28 +699,33 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     @GlobalTransactional
     public void processSeckillOrder(SeckillRequest req) {
         Integer uId = req.getuId();
-        Integer pId = req.getpId();
+        Integer activityId = req.getActivityId();
+        // 真实库存不足时不归还名额：名额本就是从库存里划出的上限，
+        // 库存已被正常销售抽干说明这批名额是幽灵名额，归还只会让下一个人撞同一堵墙
+        boolean stockShortage = false;
         try {
-            // 1. 扣真实库存（数量1），条件更新兜底防超卖
+            // 1. 活动快照：秒杀价与商品名都取服务端的，绝不采信请求里的价格
+            ResponseDto<SeckillActivity> actResp = orderFeignService.getSeckillActivity(activityId);
+            if (actResp == null || actResp.getCode() == null || actResp.getCode() != 200
+                    || actResp.getDaoResult() == null) {
+                throw new RuntimeException("秒杀活动不存在");
+            }
+            SeckillActivity activity = JSON.parseObject(
+                    JSON.toJSONString(actResp.getDaoResult()), SeckillActivity.class);
+            if (activity.getSeckillPrice() == null) {
+                throw new RuntimeException("秒杀价缺失");
+            }
+            Integer pId = activity.getPId();
+
+            // 2. 扣真实库存（数量1），条件更新兜底防超卖
             Product item = new Product();
             item.setPId(pId);
             item.setStock(1);
             ResponseDto<Product> deduct = orderFeignService.checkAndDeductStock(
                     Collections.singletonList(item));
             if (deduct == null || deduct.getCode() == null || deduct.getCode() != 200) {
+                stockShortage = true;
                 throw new RuntimeException(deduct == null ? "扣减库存失败" : deduct.getMsg());
-            }
-
-            // 2. 商品价格/名称快照
-            Integer price = null;
-            String pName = null;
-            ResponseDto<Product> prodResp = orderFeignService.listByIds(
-                    Collections.singletonList(pId));
-            if (prodResp != null && prodResp.getCode() != null && prodResp.getCode() == 200
-                    && prodResp.getDataList() != null && !prodResp.getDataList().isEmpty()) {
-                Product p = prodResp.getDataList().get(0);
-                price = p.getPrice();
-                pName = p.getPName();
             }
 
             // 3. 收货地址快照
@@ -614,37 +741,39 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 log.warn("秒杀拉取收货地址失败 addressId={}, err={}", req.getAddressId(), e.getMessage());
             }
 
-            // 4. 创建订单
+            // 4. 创建订单，金额为秒杀价
             Order order = new Order();
             order.setAddPerson(req.getAddPerson() == null || req.getAddPerson().isEmpty()
                     ? "anonymous" : req.getAddPerson());
+            order.setUId(uId);
             order.setCreateTime(new Date());
             order.setOrderStatus(1);
             order.setOrderNo(generateOrderNo());
             order.setOrderAddress(orderAddress);
-            order.setOrderAmount(price == null ? BigDecimal.ZERO : BigDecimal.valueOf(price.doubleValue()));
+            order.setOrderAmount(activity.getSeckillPrice());
             orderMapper.insert(order);
 
             // 5. 订单商品明细（数量1）
             OrderItem oi = new OrderItem();
             oi.setOId(order.getOId());
             oi.setPId(pId);
-            oi.setPName(pName);
+            oi.setPName(activity.getPName());
             oi.setQuantity(1);
-            oi.setPrice(price == null ? null : BigDecimal.valueOf(price.doubleValue()));
+            oi.setPrice(activity.getSeckillPrice());
             orderItemMapper.insert(oi);
 
             // 6. 成功结果（Redis 写入不受 Seata 回滚影响）
-            saveSeckillResult(uId, pId, new SeckillResultVO("SUCCESS", "下单成功", order.getOrderNo()));
+            saveSeckillResult(uId, activityId, new SeckillResultVO("SUCCESS", "下单成功", order.getOrderNo()));
         } catch (Exception e) {
-            log.error("[seckill] 落库失败，执行补偿 uId={}, pId={}", uId, pId, e);
-            // 补偿：回滚 Redis 预扣库存 + 移除已购标记，允许用户重试
+            log.error("[seckill] 落库失败，执行补偿 uId={}, activityId={}", uId, activityId, e);
+            // 补偿：移除已购标记允许重试；名额是否归还取决于失败原因
             try {
-                orderFeignService.rollbackSeckillStock(pId, uId);
+                orderFeignService.rollbackSeckillStock(activityId, uId, !stockShortage);
             } catch (Exception ex) {
-                log.error("[seckill] 补偿回滚 Redis 失败 uId={}, pId={}", uId, pId, ex);
+                log.error("[seckill] 补偿回滚 Redis 失败 uId={}, activityId={}", uId, activityId, ex);
             }
-            saveSeckillResult(uId, pId, new SeckillResultVO("FAILED", "下单失败，请重试", null));
+            saveSeckillResult(uId, activityId, new SeckillResultVO("FAILED",
+                    stockShortage ? "商品库存不足，秒杀失败" : "下单失败，请重试", null));
             // 抛出以触发 Seata 全局回滚（订单/真实库存）
             throw new RuntimeException("秒杀落库失败: " + e.getMessage(), e);
         }
@@ -653,8 +782,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     /**
      * 将秒杀结果写入 Redis，有效期 1 小时，供前端轮询查询。
      */
-    private void saveSeckillResult(Integer uId, Integer pId, SeckillResultVO vo) {
-        RBucket<SeckillResultVO> bucket = redissonClient.getBucket(SECKILL_RESULT_KEY + uId + ":" + pId);
+    private void saveSeckillResult(Integer uId, Integer activityId, SeckillResultVO vo) {
+        RBucket<SeckillResultVO> bucket = redissonClient.getBucket(SECKILL_RESULT_KEY + uId + ":" + activityId);
         bucket.set(vo, 1, TimeUnit.HOURS);
     }
 }
