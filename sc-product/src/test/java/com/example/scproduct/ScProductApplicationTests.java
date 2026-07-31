@@ -20,7 +20,7 @@ class ScProductApplicationTests {
     void contextLoads() {
         ResponseDto<Product> responseDto =  productService.
                 pageQuery(null,"手机",null,null,
-                        null,null,1,200, AudienceScope.unrestricted());
+                        null,null,null,1,200, AudienceScope.unrestricted());
         List<Product> productList = responseDto.getDataList();
 
     }

@@ -160,12 +160,41 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
         activityMapper.update(null, new LambdaUpdateWrapper<SeckillActivity>()
                 .eq(SeckillActivity::getId, id)
                 .set(SeckillActivity::getStatus, 0));
-        // 名额置 0 而非删 key：删了之后在途补偿的 INCR 会把它重建成 1
-        RBucket<String> bucket = redissonClient.getBucket(SECKILL_STOCK_KEY + id, StringCodec.INSTANCE);
+        zeroStock(id);
+        return ResponseDto.success(null);
+    }
+
+    @Override
+    public int endByProduct(Integer pId) {
+        if (pId == null) {
+            return 0;
+        }
+        List<SeckillActivity> unfinished = activityMapper.selectList(new LambdaQueryWrapper<SeckillActivity>()
+                .eq(SeckillActivity::getPId, pId)
+                .eq(SeckillActivity::getStatus, STATUS_VALID)
+                .ge(SeckillActivity::getEndTime, new Date()));
+        if (unfinished.isEmpty()) {
+            return 0;
+        }
+        List<Integer> ids = new ArrayList<>();
+        for (SeckillActivity a : unfinished) {
+            ids.add(a.getId());
+        }
+        activityMapper.update(null, new LambdaUpdateWrapper<SeckillActivity>()
+                .in(SeckillActivity::getId, ids)
+                .set(SeckillActivity::getStatus, 0));
+        for (Integer id : ids) {
+            zeroStock(id);
+        }
+        return ids.size();
+    }
+
+    /** 名额置 0 而非删 key：删了之后在途补偿的 INCR 会把它重建成 1 */
+    private void zeroStock(Integer activityId) {
+        RBucket<String> bucket = redissonClient.getBucket(SECKILL_STOCK_KEY + activityId, StringCodec.INSTANCE);
         if (bucket.isExists()) {
             bucket.set("0", bucket.remainTimeToLive(), TimeUnit.MILLISECONDS);
         }
-        return ResponseDto.success(null);
     }
 
     @Override

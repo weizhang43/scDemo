@@ -13,6 +13,7 @@ import com.example.scproduct.es.ProductDescEsService;
 import com.example.scproduct.mapper.ProductMapper;
 import com.example.scproduct.service.ProductService;
 import com.example.scproduct.service.PromotionService;
+import com.example.scproduct.service.SeckillActivityService;
 import com.example.scproduct.vo.ProductExportVO;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
@@ -53,6 +54,9 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
     @Autowired
     private PromotionService promotionService;
 
+    @Autowired
+    private SeckillActivityService seckillActivityService;
+
     /** 商品点赞数缓存：Redis Hash，field=商品ID，value=当前总点赞数（含未落库部分），作为权威值 */
     private static final String LIKE_COUNT_KEY = "product:like:count";
     /** 待落库商品ID集合：记录点赞数发生变化、需回写 DB 的商品 */
@@ -60,6 +64,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
 
     /** 上架状态：1-上架 0-下架 */
     private static final int STATUS_ON_SALE = 1;
+    private static final int STATUS_OFF_SHELF = 0;
 
     /**
      * 演示链路：插入一条固定垃圾袋商品。
@@ -152,6 +157,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
 
     /**
      * 多条件分页查询：复用 buildListWrapper（含 ES 模糊检索降级），并把 Redis 中实时点赞数合并回结果。
+     * status 非空时再按上下架过滤（商家列表的在售 / 下架 tab）。
      */
     @Override
     public ResponseDto<Product> pageQuery(String pName,
@@ -160,12 +166,15 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
                                          Date productionDateEnd,
                                          String origin,
                                          Integer isExpired,
+                                         Integer status,
                                          int pageNo,
                                          int pageSize,
                                          AudienceScope scope) {
         Page<Product> page = new Page<>(pageNo, pageSize);
         LambdaQueryWrapper<Product> queryWrapper = buildListWrapper(pName, proDesc, productionDateStart,
                 productionDateEnd, origin, isExpired, scope);
+        // status 只加在列表查询上，不进 buildListWrapper：导出沿用旧的「不限上下架」语义
+        queryWrapper.eq(status != null, Product::getStatus, status);
         page = productMapper.selectPage(page, queryWrapper);
         mergeLikeCountFromRedis(page.getRecords());
         promotionService.fillEffectivePrice(page.getRecords());
@@ -305,6 +314,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public ResponseDto<Product> setShelfStatus(Integer id, Integer status, AudienceScope scope) {
         if (id == null || status == null || (status != 0 && status != STATUS_ON_SALE)) {
             return ResponseDto.error("参数非法：status 只能为 0 或 1");
@@ -319,6 +329,13 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
         productMapper.update(null, new LambdaUpdateWrapper<Product>()
                 .eq(Product::getPId, id)
                 .set(Product::getStatus, status));
+        if (status == 0) {
+            // 下架即结束未完结的秒杀：活动还挂着而商品顾客侧已经看不到，秒到手也下不了单
+            int ended = seckillActivityService.endByProduct(id);
+            if (ended > 0) {
+                log.info("[setShelfStatus] pId={} off shelf, ended {} seckill activities", id, ended);
+            }
+        }
         return ResponseDto.success(null);
     }
 
@@ -489,15 +506,12 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public int markExpiredProducts() {
-        // 查询所有未过期商品
+    public String markExpiredProducts() {
+        long start = System.currentTimeMillis();
+        // 一、把日期已过期、但标记还停在 is_expired=0 的商品刷成过期
         List<Product> notExpired = productMapper.selectList(
                 new LambdaQueryWrapper<Product>().eq(Product::getIsExpired, 0)
         );
-        if (notExpired.isEmpty()) {
-            return 0;
-        }
-        // 过滤出实际已过期的：production_date + shelf_life 天 < 当前日期
         long now = System.currentTimeMillis();
         List<Integer> expiredIds = notExpired.stream()
                 .filter(p -> p.getProductionDate() != null && p.getShelfLife() != null)
@@ -507,13 +521,23 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
                 })
                 .map(Product::getPId)
                 .collect(Collectors.toList());
-        if (expiredIds.isEmpty()) {
-            return 0;
+        int marked = 0;
+        if (!expiredIds.isEmpty()) {
+            marked = productMapper.update(null, new LambdaUpdateWrapper<Product>()
+                    .in(Product::getPId, expiredIds)
+                    .set(Product::getIsExpired, 1));
         }
-        boolean ok = update(new LambdaUpdateWrapper<Product>()
-                .in(Product::getPId, expiredIds)
-                .set(Product::getIsExpired, 1));
-        return ok ? expiredIds.size() : 0;
+        // 二、过期商品一律下架。故意用独立一条 SQL 而不是并进上面的 set：这样除了本轮新过期的，
+        //     历史遗留的「已过期仍在售」和商家手工重新上架的过期商品也会一并被收下架。
+        //     status 为 NULL 的行不参与（顾客侧本就只看 status=1，等价于已下架）。
+        int offShelf = productMapper.update(null, new LambdaUpdateWrapper<Product>()
+                .eq(Product::getIsExpired, 1)
+                .ne(Product::getStatus, STATUS_OFF_SHELF)
+                .set(Product::getStatus, STATUS_OFF_SHELF));
+        String summary = String.format("markedExpired=%d, offShelf=%d, costMs=%d",
+                marked, offShelf, System.currentTimeMillis() - start);
+        log.info("[markExpiredProducts] finish, {}", summary);
+        return summary;
     }
 
     @Override

@@ -135,7 +135,7 @@ public class ProductController {
     }
 
     /**
-     * 商品列表分页查询：商品名称、商品描述、生产日期区间、产地、是否过期过滤，按 id 倒序。
+     * 商品列表分页查询：商品名称、商品描述、生产日期区间、产地、是否过期、上下架过滤，按 id 倒序。
      * 商品描述模糊检索下沉到 ES，ES 不可用时降级回 MySQL LIKE。
      */
     @GetMapping("/pageQuery")
@@ -148,17 +148,18 @@ public class ProductController {
                                           @DateTimeFormat(pattern = "yyyy-MM-dd") Date productionDateEnd,
                                           @RequestParam(value = "origin", required = false) String origin,
                                           @RequestParam(value = "isExpired", required = false) Integer isExpired,
+                                          @RequestParam(value = "status", required = false) Integer status,
                                           @RequestParam(value = "pageNo", defaultValue = "1") int pageNo,
                                           @RequestParam(value = "pageSize", defaultValue = "10") int pageSize) {
         return productService.pageQuery(pName, proDesc, productionDateStart, productionDateEnd, origin, isExpired,
-                pageNo, pageSize, AudienceResolver.current());
+                status, pageNo, pageSize, AudienceResolver.current());
     }
 
     /**
      * pageQuery 限流兜底：参数列表须与原方法一致，末尾追加 BlockException
      */
     public ResponseDto<Product> pageQueryBlockHandler(String pName, String proDesc, Date productionDateStart, Date productionDateEnd,
-                                                      String origin, Integer isExpired, int pageNo, int pageSize,
+                                                      String origin, Integer isExpired, Integer status, int pageNo, int pageSize,
                                                       BlockException ex) {
         return ResponseDto.error("请求过于频繁，请稍后再试");
     }

@@ -16,7 +16,8 @@ import static response.ResponseDto.SUCCESS_CODE;
  * 商品过期处理任务
  * 调度名称：handleProductExpiredJob
  * 逻辑：通过 Feign 触发 sc-product 扫描所有 is_expired=0 的商品，
- *       若 production_date + shelf_life 天 < 当前日期，则将 is_expired 改为 1。
+ *       若 production_date + shelf_life 天 < 当前日期，则将 is_expired 改为 1；
+ *       随后把所有已过期商品统一下架（status 改为 0）。
  */
 @Slf4j
 @Component
@@ -26,7 +27,7 @@ public class HandleProductExpiredJobHandler {
     private ProductFeignService productFeignService;
 
     /**
-     * XXL-Job 入口：扫描未过期商品并将已过期的标记为 is_expired=1。
+     * XXL-Job 入口：标记过期商品，并将已过期商品自动下架。
      */
     @XxlJob("handleProductExpiredJob")
     public void execute() {
@@ -34,11 +35,11 @@ public class HandleProductExpiredJobHandler {
         log.info("[handleProductExpiredJob] start, scanTime={}", now);
         long start = System.currentTimeMillis();
         try {
-            ResponseDto<Integer> resp = productFeignService.markExpired();
+            ResponseDto<String> resp = productFeignService.markExpired();
             if (resp == null || !SUCCESS_CODE.equals(resp.getCode())) {
                 throw new RuntimeException("sc-product markExpired fail, resp=" + resp);
             }
-            log.info("[handleProductExpiredJob] finish, markedExpired={} costMs={}",
+            log.info("[handleProductExpiredJob] finish, {} costMs={}",
                     resp.getDaoResult(), System.currentTimeMillis() - start);
         } catch (Exception e) {
             log.error("[handleProductExpiredJob] error", e);

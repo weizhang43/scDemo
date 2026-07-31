@@ -16,10 +16,10 @@ public interface ProductFeignService {
     ResponseDto<Integer> flushLikeCount();
 
     /**
-     * 标记已过期商品，返回本次标记数量。
+     * 标记已过期商品并把已过期商品统一下架，返回执行摘要。
      */
     @PostMapping("/product/job/markExpired")
-    ResponseDto<Integer> markExpired();
+    ResponseDto<String> markExpired();
 
     /**
      * AI 补商品描述并同步 ES，返回执行摘要。

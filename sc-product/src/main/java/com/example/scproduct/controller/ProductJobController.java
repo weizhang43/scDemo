@@ -31,10 +31,10 @@ public class ProductJobController {
     }
 
     /**
-     * 扫描未过期商品，将生产日期+保质期 < 当前日期的标记为已过期。
+     * 扫描未过期商品，将生产日期+保质期 < 当前日期的标记为已过期，并把已过期商品统一下架。
      */
     @PostMapping("/markExpired")
-    public ResponseDto<Integer> markExpired() {
+    public ResponseDto<String> markExpired() {
         return ResponseDto.success(productService.markExpiredProducts());
     }
 

@@ -47,8 +47,10 @@ public interface ProductService extends IService<Product> {
     List<Product> listSellableByIds(List<Integer> ids);
 
     /**
-     * 商品列表分页查询：商品名称、商品描述、生产日期区间、产地、是否过期过滤，按 id 倒序。
+     * 商品列表分页查询：商品名称、商品描述、生产日期区间、产地、是否过期、上下架过滤，按 id 倒序。
      * 商品描述模糊检索下沉到 ES，ES 不可用时降级回 MySQL LIKE。
+     *
+     * @param status 1-在售 0-已下架，传 null 不限
      */
     ResponseDto<Product> pageQuery(String pName,
                                    String proDesc,
@@ -56,6 +58,7 @@ public interface ProductService extends IService<Product> {
                                    Date productionDateEnd,
                                    String origin,
                                    Integer isExpired,
+                                   Integer status,
                                    int pageNo,
                                    int pageSize,
                                    AudienceScope scope);
@@ -104,10 +107,11 @@ public interface ProductService extends IService<Product> {
     ResponseDto<Product> checkAndDeductStock(List<Product> items);
 
     /**
-     * 扫描所有未过期商品，将生产日期+保质期 < 当前日期的标记为已过期。
-     * @return 本次被标记为已过期的商品数量
+     * 定时任务：扫描所有未过期商品，将生产日期+保质期 < 当前日期的标记为已过期，
+     * 并把所有已过期商品统一下架（status=0）。
+     * @return 形如 markedExpired=n, offShelf=n, costMs=n 的汇总，供 xxl-job 日志留痕
      */
-    int markExpiredProducts();
+    String markExpiredProducts();
 
     /**
      * 按查询条件导出商品列表为 Excel（EasyExcel）。

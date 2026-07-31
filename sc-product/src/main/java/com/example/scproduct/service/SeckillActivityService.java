@@ -19,6 +19,14 @@ public interface SeckillActivityService extends IService<SeckillActivity> {
     ResponseDto<SeckillActivity> cancel(Integer id, AudienceScope scope);
 
     /**
+     * 结束某商品下所有尚未结束的有效活动（商品下架时调用）。
+     * 已结束 / 已取消的活动不动，重复调用无副作用。
+     *
+     * @return 本次结束的活动数
+     */
+    int endByProduct(Integer pId);
+
+    /**
      * 商家端：秒杀活动分页列表，pId 非空时只看某个商品。
      */
     ResponseDto<SeckillActivity> pageQuery(Integer pId, int pageNo, int pageSize, AudienceScope scope);
