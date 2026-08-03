@@ -26,7 +26,7 @@ public interface ProductService extends IService<Product> {
     ResponseDto<Product> listLowStock(int threshold, AudienceScope scope);
 
     /**
-     * 顾客首页：好评榜，按点赞数倒序。点赞以 Redis 为权威，返回前会用 Redis 实时值重排。
+     * 顾客首页：好评榜，按点赞数倒序。点赞数联 t_product_like 现取，排序与展示同源。
      */
     ResponseDto<Product> listLikeRank(int limit, AudienceScope scope);
 
@@ -47,10 +47,12 @@ public interface ProductService extends IService<Product> {
     List<Product> listSellableByIds(List<Integer> ids);
 
     /**
-     * 商品列表分页查询：商品名称、商品描述、生产日期区间、产地、是否过期、上下架过滤，按 id 倒序。
+     * 商品列表分页查询：商品名称、商品描述、生产日期区间、产地、是否过期、上下架过滤。
      * 商品描述模糊检索下沉到 ES，ES 不可用时降级回 MySQL LIKE。
+     * 结果始终带成交数与评价数。
      *
      * @param status 1-在售 0-已下架，传 null 不限
+     * @param sortBy sales-成交数 reviews-评价数 likes-点赞数，其余（含 null）按 id 倒序
      */
     ResponseDto<Product> pageQuery(String pName,
                                    String proDesc,
@@ -59,6 +61,7 @@ public interface ProductService extends IService<Product> {
                                    String origin,
                                    Integer isExpired,
                                    Integer status,
+                                   String sortBy,
                                    int pageNo,
                                    int pageSize,
                                    AudienceScope scope);
@@ -84,9 +87,15 @@ public interface ProductService extends IService<Product> {
     ResponseDto<Product> setShelfStatus(Integer id, Integer status, AudienceScope scope);
 
     /**
-     * 商品点赞：点赞数量 +1，返回最新商品
+     * 商品点赞：一个账号对一个商品只能点一次，重复点不加数。
+     * uId 必须来自网关注入的 X-User-Id —— sc-product 的 AudienceScope.customer() 是共享单例，不带 uId。
      */
-    ResponseDto<Product> like(Integer id);
+    ResponseDto<Product> like(Integer id, Integer uId);
+
+    /**
+     * 批量回读「我点过哪些商品」，供前端一次性渲染按钮态。
+     */
+    ResponseDto<Integer> listMyLikedPIds(Integer uId, List<Integer> pIds);
 
     /**
      * 将 Redis 中缓存的点赞数批量幂等回写到数据库。

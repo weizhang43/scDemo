@@ -83,6 +83,17 @@ public class Product {
     @TableField(exist = false)
     private BigDecimal effectivePrice;
 
+    /**
+     * 成交数：order_status IN (1,2) 的订单明细 quantity 之和，口径同首页销量榜。
+     * 非持久化字段，由 selectPageWithStats 联表现取。
+     */
+    @TableField(exist = false)
+    private Integer saleCount;
+
+    /** 评价数。非持久化字段，由 selectPageWithStats 联表现取。 */
+    @TableField(exist = false)
+    private Integer reviewCount;
+
     public Product(){
 
     }

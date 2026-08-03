@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS `t_user` (
   `gender` TINYINT NULL COMMENT '性别 0-未知 1-男 2-女',
   `phone` VARCHAR(20) NULL COMMENT '手机号码',
   `birthday` DATE NULL COMMENT '出生日期',
+  `avatar` VARCHAR(255) NULL COMMENT '头像图片路径',
   `email` VARCHAR(128) NULL COMMENT '邮箱',
   `u_type` TINYINT NOT NULL DEFAULT 3 COMMENT '用户类型 1-商家 2-顾客 3-管理员',
   PRIMARY KEY (`u_id`),

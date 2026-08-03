@@ -1,6 +1,9 @@
 package com.example.scproduct.mapper;
 
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.core.toolkit.Constants;
 import com.curry.model.Product;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -11,6 +14,43 @@ import java.util.List;
 
 @Mapper
 public interface ProductMapper extends BaseMapper<Product> {
+
+    /**
+     * 带成交数 / 评价数 / 点赞数的分页查询。四张表同库（schema zhangwei），直接联表，不走 Feign。
+     * 成交口径与首页销量榜 OrderItemMapper.selectSalesRank 一致：order_status IN (1,2)。
+     * 点赞数取 t_product_like 的行数而非 t_product.like_count 快照列 —— 后者靠 xxl-job 回写，
+     * 任务没跑就是陈旧值，而明细表有唯一索引 uk_u_id_p_id，行数即精确点赞人数。
+     * 所以 SELECT 必须逐列枚举（不能 p.*），否则 p.like_count 与聚合出来的同名列会撞车。
+     * WHERE 全部由 ${ew.customSqlSegment} 从 wrapper 生成，applyScope 的权限过滤原样带入，不手写。
+     * 派生表的键列必须起别名（s_pid / r_pid / l_pid），否则 wrapper 里的 p_id 条件会有歧义。
+     * 排序走 choose 白名单分支而非字符串拼接，sortBy 无注入面；每个分支都带 p_id 次级键保证分页稳定。
+     */
+    @Select("<script>" +
+            "SELECT p.p_id, p.p_name, p.price, p.stock, p.production_date, p.shelf_life, p.origin, " +
+            "       p.is_expired, p.manufacturer, p.pro_desc, p.image_url, p.merchant_id, p.status, " +
+            "       COALESCE(s.sale_count, 0) AS sale_count, " +
+            "       COALESCE(r.review_count, 0) AS review_count, " +
+            "       COALESCE(l.like_total, 0) AS like_count " +
+            "FROM t_product p " +
+            "LEFT JOIN (SELECT i.p_id AS s_pid, SUM(i.quantity) AS sale_count " +
+            "           FROM t_order_item i JOIN t_order o ON o.o_id = i.o_id " +
+            "           WHERE o.order_status IN (1, 2) GROUP BY i.p_id) s ON s.s_pid = p.p_id " +
+            "LEFT JOIN (SELECT p_id AS r_pid, COUNT(*) AS review_count " +
+            "           FROM t_product_review GROUP BY p_id) r ON r.r_pid = p.p_id " +
+            "LEFT JOIN (SELECT p_id AS l_pid, COUNT(*) AS like_total " +
+            "           FROM t_product_like GROUP BY p_id) l ON l.l_pid = p.p_id " +
+            "${ew.customSqlSegment} " +
+            "<choose>" +
+            "  <when test='sortBy == \"sales\"'>ORDER BY sale_count DESC, p.p_id DESC</when>" +
+            "  <when test='sortBy == \"reviews\"'>ORDER BY review_count DESC, p.p_id DESC</when>" +
+            // like_count 既是输出别名又是 t_product 的真实列名，这里写原始表达式避开歧义
+            "  <when test='sortBy == \"likes\"'>ORDER BY COALESCE(l.like_total, 0) DESC, p.p_id DESC</when>" +
+            "  <otherwise>ORDER BY p.p_id DESC</otherwise>" +
+            "</choose>" +
+            "</script>")
+    IPage<Product> selectPageWithStats(IPage<Product> page,
+                                       @Param(Constants.WRAPPER) Wrapper<Product> wrapper,
+                                       @Param("sortBy") String sortBy);
 
     /**
      * 查询未过期、且将在 monthsAhead 个月内到期的商品。

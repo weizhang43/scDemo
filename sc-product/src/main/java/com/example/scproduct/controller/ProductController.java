@@ -4,6 +4,7 @@ import com.alibaba.csp.sentinel.annotation.SentinelResource;
 import com.alibaba.csp.sentinel.slots.block.BlockException;
 import com.curry.model.Product;
 import com.curry.model.annotation.OpLog;
+import com.curry.model.auth.AuthConstant;
 import com.example.scproduct.auth.AudienceResolver;
 import com.example.scproduct.auth.AudienceScope;
 import com.example.scproduct.service.ExportTaskService;
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -135,7 +137,8 @@ public class ProductController {
     }
 
     /**
-     * 商品列表分页查询：商品名称、商品描述、生产日期区间、产地、是否过期、上下架过滤，按 id 倒序。
+     * 商品列表分页查询：商品名称、商品描述、生产日期区间、产地、是否过期、上下架过滤。
+     * 默认按 id 倒序，sortBy 可切成交数 / 评价数 / 点赞数；结果始终带成交数与评价数。
      * 商品描述模糊检索下沉到 ES，ES 不可用时降级回 MySQL LIKE。
      */
     @GetMapping("/pageQuery")
@@ -149,17 +152,19 @@ public class ProductController {
                                           @RequestParam(value = "origin", required = false) String origin,
                                           @RequestParam(value = "isExpired", required = false) Integer isExpired,
                                           @RequestParam(value = "status", required = false) Integer status,
+                                          @RequestParam(value = "sortBy", required = false) String sortBy,
                                           @RequestParam(value = "pageNo", defaultValue = "1") int pageNo,
                                           @RequestParam(value = "pageSize", defaultValue = "10") int pageSize) {
         return productService.pageQuery(pName, proDesc, productionDateStart, productionDateEnd, origin, isExpired,
-                status, pageNo, pageSize, AudienceResolver.current());
+                status, sortBy, pageNo, pageSize, AudienceResolver.current());
     }
 
     /**
      * pageQuery 限流兜底：参数列表须与原方法一致，末尾追加 BlockException
      */
     public ResponseDto<Product> pageQueryBlockHandler(String pName, String proDesc, Date productionDateStart, Date productionDateEnd,
-                                                      String origin, Integer isExpired, Integer status, int pageNo, int pageSize,
+                                                      String origin, Integer isExpired, Integer status, String sortBy,
+                                                      int pageNo, int pageSize,
                                                       BlockException ex) {
         return ResponseDto.error("请求过于频繁，请稍后再试");
     }
@@ -174,11 +179,23 @@ public class ProductController {
     }
 
     /**
-     * 商品点赞：点赞数量 +1
+     * 商品点赞：一个账号对一个商品只能点一次，重复点返回提示且不加数。
+     * uId 直接读网关注入的请求头 —— AudienceScope.customer() 是共享单例，拿不到 uId。
      */
+    @OpLog(module = "商品管理", type = OpLog.OpType.ADD, description = "商品点赞")
     @PostMapping("/like/{id}")
-    public ResponseDto<Product> like(@PathVariable("id") Integer id) {
-        return productService.like(id);
+    public ResponseDto<Product> like(
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_ID, required = false) Integer uId,
+            @PathVariable("id") Integer id) {
+        return productService.like(id, uId);
+    }
+
+    /** 批量查「我点过哪些商品」，dataList 返回 pId 列表 */
+    @GetMapping("/like/mine")
+    public ResponseDto<Integer> myLikes(
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_ID, required = false) Integer uId,
+            @RequestParam("pIds") List<Integer> pIds) {
+        return productService.listMyLikedPIds(uId, pIds);
     }
 
     /**

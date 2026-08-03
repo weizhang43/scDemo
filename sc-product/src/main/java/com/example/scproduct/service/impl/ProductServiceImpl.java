@@ -5,11 +5,13 @@ import com.alibaba.excel.ExcelWriter;
 import com.alibaba.excel.write.metadata.WriteSheet;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.curry.model.Product;
 import com.example.scproduct.auth.AudienceScope;
 import com.example.scproduct.es.ProductDescEsService;
+import com.example.scproduct.mapper.ProductLikeMapper;
 import com.example.scproduct.mapper.ProductMapper;
 import com.example.scproduct.service.ProductService;
 import com.example.scproduct.service.PromotionService;
@@ -30,11 +32,9 @@ import java.io.FileOutputStream;
 import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -44,6 +44,9 @@ import java.util.stream.Collectors;
 public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> implements ProductService {
     @Autowired
     private ProductMapper productMapper;
+
+    @Autowired
+    private ProductLikeMapper productLikeMapper;
 
     @Autowired
     private RedissonClient redissonClient;
@@ -57,7 +60,10 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
     @Autowired
     private SeckillActivityService seckillActivityService;
 
-    /** 商品点赞数缓存：Redis Hash，field=商品ID，value=当前总点赞数（含未落库部分），作为权威值 */
+    /**
+     * 商品点赞数缓存：Redis Hash，field=商品ID，value=当前总点赞数。
+     * 只服务于写侧削峰（攒批回写 t_product.like_count 快照列），读侧一律以 t_product_like 的行数为准。
+     */
     private static final String LIKE_COUNT_KEY = "product:like:count";
     /** 待落库商品ID集合：记录点赞数发生变化、需回写 DB 的商品 */
     private static final String LIKE_DIRTY_KEY = "product:like:dirty";
@@ -95,29 +101,17 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
     }
 
     /**
-     * 好评榜。点赞以 Redis 为权威、由定时任务回刷 DB，所以不能直接取 DB 的 top N：
-     * 先按 DB 点赞数过量取一批，合并 Redis 实时值后在内存里重排再截断。
-     * 也不能只读 Redis——like() 仅在首次点赞时把商品 seed 进 map，从未被点赞的商品不在其中。
-     * 点赞只增不减，故 DB 值恒为下界，误差仅限"一个回刷周期内涨幅足以挤进榜单、但原先在候选集之外"的商品。
+     * 好评榜。点赞数直接由 selectPageWithStats 联 t_product_like 现取，
+     * 排序与展示用的是同一个精确值，不再需要「过量取候选 + 内存重排」那套绕开快照列滞后的补偿逻辑。
      */
     @Override
     public ResponseDto<Product> listLikeRank(int limit, AudienceScope scope) {
-        int candidateSize = Math.max(limit * 5, 50);
-        Page<Product> page = new Page<>(1, candidateSize);
-        LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<Product>()
-                .orderByDesc(Product::getLikeCount)
-                .orderByAsc(Product::getPId);
+        Page<Product> page = new Page<>(1, limit);
+        LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<>();
         applyScope(wrapper, scope);
-        List<Product> candidates = productMapper.selectPage(page, wrapper).getRecords();
-        mergeLikeCountFromRedis(candidates);
-        candidates.sort(Comparator
-                .comparing((Product p) -> p.getLikeCount() == null ? 0 : p.getLikeCount(),
-                        Comparator.reverseOrder())
-                .thenComparing(Product::getPId));
-        List<Product> top = candidates.size() > limit ? candidates.subList(0, limit) : candidates;
-        List<Product> result = new ArrayList<>(top);
-        promotionService.fillEffectivePrice(result);
-        return ResponseDto.success(result);
+        List<Product> records = productMapper.selectPageWithStats(page, wrapper, "likes").getRecords();
+        promotionService.fillEffectivePrice(records);
+        return ResponseDto.success(records);
     }
 
     @Override
@@ -142,6 +136,8 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
         Product product = productMapper.selectOne(wrapper);
         if (product != null) {
             promotionService.fillEffectivePrice(Collections.singletonList(product));
+            // 详情页走的是 MP 的单表查询，拿到的 like_count 是快照列，这里用明细表的精确值覆盖
+            product.setLikeCount((int) productLikeMapper.countByPId(id));
         }
         return product;
     }
@@ -156,8 +152,9 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
     }
 
     /**
-     * 多条件分页查询：复用 buildListWrapper（含 ES 模糊检索降级），并把 Redis 中实时点赞数合并回结果。
+     * 多条件分页查询：复用 buildListWrapper（含 ES 模糊检索降级）。
      * status 非空时再按上下架过滤（商家列表的在售 / 下架 tab）。
+     * 无论是否指定 sortBy 都走 selectPageWithStats，保证卡片上的成交数 / 评价数 / 点赞数在默认排序下也有值。
      */
     @Override
     public ResponseDto<Product> pageQuery(String pName,
@@ -167,6 +164,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
                                          String origin,
                                          Integer isExpired,
                                          Integer status,
+                                         String sortBy,
                                          int pageNo,
                                          int pageSize,
                                          AudienceScope scope) {
@@ -175,10 +173,9 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
                 productionDateEnd, origin, isExpired, scope);
         // status 只加在列表查询上，不进 buildListWrapper：导出沿用旧的「不限上下架」语义
         queryWrapper.eq(status != null, Product::getStatus, status);
-        page = productMapper.selectPage(page, queryWrapper);
-        mergeLikeCountFromRedis(page.getRecords());
-        promotionService.fillEffectivePrice(page.getRecords());
-        return ResponseDto.success(page);
+        IPage<Product> result = productMapper.selectPageWithStats(page, queryWrapper, sortBy);
+        promotionService.fillEffectivePrice(result.getRecords());
+        return ResponseDto.success(result);
     }
 
     /**
@@ -199,7 +196,9 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
     }
 
     /**
-     * 构建商品列表/导出查询 wrapper。
+     * 构建商品列表/导出查询 wrapper（不含排序）。
+     * 排序由调用方决定：pageQuery 走 selectPageWithStats 的 choose 分支，两个导出各自显式按 p_id 倒序。
+     * 这里不能带 ORDER BY —— wrapper 会被 ${ew.customSqlSegment} 原样拼进自定义 SQL，与后面的 ORDER BY 撞车。
      * proDesc 非空时先查 ES 召回 pId 列表，再 IN 到 MySQL：
      *   - ES 命中为空 → IN (空集)，等价于无数据，避免全表 LIKE 扫描
      *   - ES 不可用  → 降级回 MySQL LIKE，保证功能可用（牺牲性能）
@@ -216,8 +215,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
                 .ge(productionDateStart != null, Product::getProductionDate, productionDateStart)
                 .le(productionDateEnd != null, Product::getProductionDate, productionDateEnd)
                 .eq(origin != null && !origin.isEmpty(), Product::getOrigin, origin)
-                .eq(isExpired != null, Product::getIsExpired, isExpired)
-                .orderByDesc(Product::getPId);
+                .eq(isExpired != null, Product::getIsExpired, isExpired);
         applyScope(queryWrapper, scope);
 
         boolean hasProDesc =  proDesc != null && !proDesc.trim().isEmpty();
@@ -238,29 +236,6 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
             queryWrapper.like(true, Product::getProDesc, proDesc);
         }
         return queryWrapper;
-    }
-
-    /** 用 Redis 中的权威点赞数覆盖 DB 查出的值，保证列表展示接近实时 */
-    private void mergeLikeCountFromRedis(List<Product> records) {
-        if (records == null || records.isEmpty()) {
-            return;
-        }
-        try {
-            Set<Integer> ids = records.stream().map(Product::getPId).collect(Collectors.toSet());
-            Map<Integer, Long> cached = redissonClient.<Integer, Long>getMap(LIKE_COUNT_KEY).getAll(ids);
-            if (cached.isEmpty()) {
-                return;
-            }
-            for (Product p : records) {
-                Long c = cached.get(p.getPId());
-                if (c != null) {
-                    p.setLikeCount(c.intValue());
-                }
-            }
-        } catch (Exception e) {
-            // Redis 不可用时降级为 DB 值展示
-            log.warn("[mergeLikeCountFromRedis] redis unavailable, use db value", e);
-        }
     }
 
     /**
@@ -340,39 +315,48 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
     }
 
     /**
-     * 商品点赞：Redis Hash 计数并标脏等待回写；首次点赞时以 DB 现值播种。
-     * Redis 不可用时降级为直接 SQL 累加，保证功能可用。
+     * 商品点赞：一人一商品只能点一次，去重靠 t_product_like 的唯一索引。
+     * 点赞数以明细表行数为准（展示侧也读它），Redis 只承担把 t_product.like_count 快照列
+     * 攒批回写的削峰职责，读侧不再依赖它，所以这里的 Redis 异常只记日志、不影响点赞成败。
      */
     @Override
-    public ResponseDto<Product> like(Integer id) {
+    public ResponseDto<Product> like(Integer id, Integer uId) {
         if (id == null) {
             return ResponseDto.error("商品ID不能为空");
         }
-        Product db = getVisibleById(id, AudienceScope.customer());
-        if (db == null) {
+        if (uId == null) {
+            return ResponseDto.error("未登录");
+        }
+        if (getVisibleById(id, AudienceScope.customer()) == null) {
             return ResponseDto.error("点赞失败：商品不存在或已下架");
         }
-        try {
-            RMap<Integer, Long> countMap = redissonClient.getMap(LIKE_COUNT_KEY);
-            // 首次点赞该商品时，用 DB 现值给 Redis 播种，之后 Redis 即为权威值
-            countMap.putIfAbsent(id, db.getLikeCount() == null ? 0L : db.getLikeCount().longValue());
-            long newCount = countMap.addAndGet(id, 1L);
-            redissonClient.getSet(LIKE_DIRTY_KEY).add(id);
-            Product vo = new Product();
-            vo.setPId(id);
-            vo.setLikeCount((int) newCount);
-            return ResponseDto.success(vo);
-        } catch (Exception e) {
-            // Redis 不可用时降级：直接原子写库，保证功能可用（牺牲削峰能力）
-            log.warn("[like] redis unavailable, fallback to db, pId={}", id, e);
-            boolean ok = update(new LambdaUpdateWrapper<Product>()
-                    .eq(Product::getPId, id)
-                    .setSql("like_count = COALESCE(like_count, 0) + 1"));
-            if (!ok) {
-                return ResponseDto.error("点赞失败：商品不存在");
-            }
-            return ResponseDto.success(getById(id));
+        // 去重网关：插不进去说明已点过，直接返回，绝不落到下面的计数逻辑
+        if (productLikeMapper.insertIgnore(uId, id) == 0) {
+            return ResponseDto.error("您已点赞过该商品");
         }
+        long total = productLikeMapper.countByPId(id);
+        try {
+            // 用明细表的精确值覆盖而非自增：Redis 丢过 key 或快照列曾偏离时，这一步顺带把它拉回正确值
+            redissonClient.<Integer, Long>getMap(LIKE_COUNT_KEY).put(id, total);
+            redissonClient.getSet(LIKE_DIRTY_KEY).add(id);
+        } catch (Exception e) {
+            log.warn("[like] redis unavailable, skip write-back queue, pId={}", id, e);
+        }
+        Product vo = new Product();
+        vo.setPId(id);
+        vo.setLikeCount((int) total);
+        return ResponseDto.success(vo);
+    }
+
+    @Override
+    public ResponseDto<Integer> listMyLikedPIds(Integer uId, List<Integer> pIds) {
+        if (uId == null) {
+            return ResponseDto.error("未登录");
+        }
+        if (pIds == null || pIds.isEmpty()) {
+            return ResponseDto.success(Collections.emptyList());
+        }
+        return ResponseDto.success(productLikeMapper.selectLikedPIds(uId, pIds));
     }
 
     /**
@@ -551,6 +535,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
                        HttpServletResponse response) throws Exception {
         LambdaQueryWrapper<Product> queryWrapper = buildListWrapper(pName, proDesc, productionDateStart,
                 productionDateEnd, origin, isExpired, scope);
+        queryWrapper.orderByDesc(Product::getPId);
         List<Product> list = productMapper.selectList(queryWrapper);
         List<ProductExportVO> rows = new java.util.ArrayList<>();
         for (int i = 0; i < list.size(); i++) {
@@ -644,6 +629,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
 
     private LambdaQueryWrapper<Product> buildExportWrapper(ProductExportQuery q) {
         return buildListWrapper(q.getpName(), q.getProDesc(), q.getProductionDateStart(),
-                q.getProductionDateEnd(), q.getOrigin(), q.getIsExpired(), q.getScope());
+                q.getProductionDateEnd(), q.getOrigin(), q.getIsExpired(), q.getScope())
+                .orderByDesc(Product::getPId);
     }
 }

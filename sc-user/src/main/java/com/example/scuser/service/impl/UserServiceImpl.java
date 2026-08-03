@@ -279,6 +279,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         update.setGender(user.getGender());
         update.setPhone(user.getPhone());
         update.setBirthday(user.getBirthday());
+        // 传空串表示移除头像；传 null 表示本次不动它（MyBatis-Plus updateById 忽略 null）
+        update.setAvatar(user.getAvatar());
         // 手机号唯一性校验
         if (user.getPhone() != null && !user.getPhone().trim().isEmpty()
                 && !user.getPhone().equals(exists.getPhone())) {

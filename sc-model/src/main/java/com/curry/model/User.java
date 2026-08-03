@@ -35,6 +35,10 @@ public class User {
     @TableField("birthday")
     private String birthday;
 
+    /** 头像图片路径，形如 /user/image/xxx.png，由 FileController 上传后返回 */
+    @TableField("avatar")
+    private String avatar;
+
     @TableField("email")
     private String email;
 
