@@ -2,6 +2,8 @@ package com.example.scorder.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.curry.model.OrderItem;
+import com.example.scorder.vo.MonthlySalesVO;
+import com.example.scorder.vo.TypeSalesVO;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -38,6 +40,36 @@ public interface OrderItemMapper extends BaseMapper<OrderItem> {
             "LIMIT #{limit}"
     })
     List<Map<String, Object>> selectSalesRank(@Param("limit") int limit);
+
+    /**
+     * 统计报表：销量按商品类型分组，联 t_product 现取 p_type（同库直接联表，不走 Feign）。
+     * merchantId 非 null 时只统计该商家商品与公共商品（与商家可见范围一致）。
+     */
+    @Select({"<script>",
+            "SELECT p.p_type AS pType, SUM(i.quantity) AS salesCount",
+            "FROM t_order_item i",
+            "JOIN t_order o ON o.o_id = i.o_id",
+            "JOIN t_product p ON p.p_id = i.p_id",
+            "WHERE o.order_status IN (1, 2)",
+            "<if test='merchantId != null'> AND (p.merchant_id = #{merchantId} OR p.merchant_id IS NULL) </if>",
+            "GROUP BY p.p_type ORDER BY p.p_type",
+            "</script>"})
+    List<TypeSalesVO> selectTypeSales(@Param("merchantId") Integer merchantId);
+
+    /**
+     * 统计报表：近三个自然月（含当月）每月销量。无销量的月份不返回，由 Service 补 0。
+     */
+    @Select({"<script>",
+            "SELECT DATE_FORMAT(o.create_time, '%Y-%m') AS month, SUM(i.quantity) AS salesCount",
+            "FROM t_order_item i",
+            "JOIN t_order o ON o.o_id = i.o_id",
+            "JOIN t_product p ON p.p_id = i.p_id",
+            "WHERE o.order_status IN (1, 2)",
+            "AND o.create_time &gt;= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 2 MONTH), '%Y-%m-01')",
+            "<if test='merchantId != null'> AND (p.merchant_id = #{merchantId} OR p.merchant_id IS NULL) </if>",
+            "GROUP BY month ORDER BY month",
+            "</script>"})
+    List<MonthlySalesVO> selectMonthlySales(@Param("merchantId") Integer merchantId);
 }
 
 

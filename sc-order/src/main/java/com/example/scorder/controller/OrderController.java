@@ -64,6 +64,27 @@ public class OrderController {
         return orderService.listSalesRank(Math.min(Math.max(limit, 1), 50));
     }
 
+    /** 统计报表：销量按商品类型分组。商家只统计自己的商品与公共商品，管理员/内部调用查全量 */
+    @GetMapping("/statistics/typeSales")
+    public ResponseDto<com.example.scorder.vo.TypeSalesVO> typeSales(
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_ID, required = false) Integer uId,
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer uType) {
+        return orderService.listTypeSales(merchantIdOf(uId, uType));
+    }
+
+    /** 统计报表：近三个自然月（含当月）每月销量，无销量的月份补 0 */
+    @GetMapping("/statistics/monthlySales")
+    public ResponseDto<com.example.scorder.vo.MonthlySalesVO> monthlySales(
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_ID, required = false) Integer uId,
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer uType) {
+        return orderService.listMonthlySales(merchantIdOf(uId, uType));
+    }
+
+    /** 仅商家身份返回其商家 ID 用于统计过滤；管理员/内部调用返回 null 查全量 */
+    private static Integer merchantIdOf(Integer uId, Integer uType) {
+        return uType != null && uType == AuthConstant.U_TYPE_MERCHANT ? uId : null;
+    }
+
     /** requestId 幂等键 TTL */
     private static final long IDEM_TTL_SECONDS = 30;
 

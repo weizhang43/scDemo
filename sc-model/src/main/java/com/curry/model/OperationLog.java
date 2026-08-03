@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 
 import java.util.Date;
@@ -17,10 +18,12 @@ public class OperationLog {
     @ExcelProperty("日志ID")
     private Long logId;
 
+    @JsonProperty("uId")
     @TableField("u_id")
     @ExcelProperty("用户ID")
     private Integer uId;
 
+    @JsonProperty("uName")
     @TableField("u_name")
     @ExcelProperty("用户名")
     private String uName;

@@ -3,6 +3,7 @@ package com.example.scproduct.service;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.curry.model.Product;
 import com.example.scproduct.auth.AudienceScope;
+import com.example.scproduct.vo.ProductTypeCountVO;
 import response.ResponseDto;
 
 import javax.servlet.http.HttpServletResponse;
@@ -45,6 +46,11 @@ public interface ProductService extends IService<Product> {
      * 已下架的商品不会出现在返回结果里 —— 调用方据此判断是否还能下单 / 是否该从榜单里剔除。
      */
     List<Product> listSellableByIds(List<Integer> ids);
+
+    /**
+     * 统计报表：按商品类型分组计数，商家只统计自己的商品与公共商品。
+     */
+    ResponseDto<ProductTypeCountVO> countByType(AudienceScope scope);
 
     /**
      * 商品列表分页查询：商品名称、商品描述、生产日期区间、产地、是否过期、上下架过滤。

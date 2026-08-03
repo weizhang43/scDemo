@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS `t_product` (
   `image_url` VARCHAR(512) DEFAULT NULL COMMENT '商品图片URL',
   `merchant_id` INT DEFAULT NULL COMMENT '所属商家用户ID（t_user.u_id，u_type=1）；NULL 视为公共商品，任何商家可管理',
   `status` TINYINT NOT NULL DEFAULT 1 COMMENT '上架状态 1-上架 0-下架（下架后顾客端不可见）',
+  `p_type` TINYINT NOT NULL DEFAULT 7 COMMENT '商品类型 1-食品饮品 2-电子产品 3-服装饰品 4-家用电器 5-汽车 6-厨房用品 7-其他',
   PRIMARY KEY (`p_id`),
   KEY `idx_merchant_status` (`merchant_id`, `status`),
   KEY `idx_status_pid` (`status`, `p_id`)
@@ -43,3 +44,6 @@ CREATE TABLE IF NOT EXISTS `t_product` (
 -- 任何商家账号仍可在商品管理页看到并管理，不会出现空列表。
 -- UPDATE `t_product` SET `merchant_id` = (SELECT MIN(`u_id`) FROM `t_user` WHERE `u_type` = 1)
 --   WHERE `merchant_id` IS NULL;
+
+-- 商品类型
+-- ALTER TABLE `t_product` ADD COLUMN `p_type` TINYINT NOT NULL DEFAULT 7 COMMENT '商品类型 1-食品饮品 2-电子产品 3-服装饰品 4-家用电器 5-汽车 6-厨房用品 7-其他' AFTER `status`;

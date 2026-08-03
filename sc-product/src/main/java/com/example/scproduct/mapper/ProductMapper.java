@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Constants;
 import com.curry.model.Product;
+import com.example.scproduct.vo.ProductTypeCountVO;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -71,6 +72,16 @@ public interface ProductMapper extends BaseMapper<Product> {
     List<Product> selectExpiringWithin(@Param("monthsAhead") int monthsAhead,
                                        @Param("merchantId") Integer merchantId,
                                        @Param("onSaleOnly") boolean onSaleOnly);
+
+    /**
+     * 按商品类型分组计数。merchantId 非 null 时只统计该商家商品与公共商品（与商家可见范围一致）。
+     */
+    @Select("<script>" +
+            "SELECT p_type AS pType, COUNT(*) AS cnt FROM t_product " +
+            "<if test='merchantId != null'> WHERE (merchant_id = #{merchantId} OR merchant_id IS NULL) </if>" +
+            "GROUP BY p_type ORDER BY p_type" +
+            "</script>")
+    List<ProductTypeCountVO> selectCountByType(@Param("merchantId") Integer merchantId);
 
     @Update("<script>" +
             "  UPDATE t_product SET stock = stock + " +

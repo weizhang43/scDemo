@@ -18,10 +18,12 @@ import com.example.scorder.mq.SeckillOrderProducer;
 import com.example.scorder.service.OrderFeignService;
 import com.example.scorder.service.OrderService;
 import com.example.scorder.service.UserFeignService;
+import com.example.scorder.vo.MonthlySalesVO;
 import com.example.scorder.vo.OrderExportVO;
 import com.example.scorder.vo.OrderTimeoutVO;
 import com.example.scorder.vo.ProductSalesRankVO;
 import com.example.scorder.vo.SeckillResultVO;
+import com.example.scorder.vo.TypeSalesVO;
 import io.seata.spring.annotation.GlobalTransactional;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RBucket;
@@ -44,6 +46,7 @@ import java.math.BigDecimal;
 import java.net.URLEncoder;
 import java.text.DecimalFormat;
 import java.text.SimpleDateFormat;
+import java.time.YearMonth;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -197,6 +200,29 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             log.warn("[salesRank] 拉取商品价格/图片失败, err={}", e.getMessage());
         }
         return ResponseDto.success(rank);
+    }
+
+    @Override
+    public ResponseDto<TypeSalesVO> listTypeSales(Integer merchantId) {
+        return ResponseDto.success(orderItemMapper.selectTypeSales(merchantId));
+    }
+
+    /**
+     * 折线图断月会误导趋势，SQL 只返回有销量的月份，这里按近三个自然月骨架补 0。
+     */
+    @Override
+    public ResponseDto<MonthlySalesVO> listMonthlySales(Integer merchantId) {
+        Map<String, Long> salesByMonth = new HashMap<>();
+        for (MonthlySalesVO vo : orderItemMapper.selectMonthlySales(merchantId)) {
+            salesByMonth.put(vo.getMonth(), vo.getSalesCount() == null ? 0L : vo.getSalesCount());
+        }
+        List<MonthlySalesVO> result = new ArrayList<>();
+        YearMonth now = YearMonth.now();
+        for (int i = 2; i >= 0; i--) {
+            String month = now.minusMonths(i).toString();
+            result.add(new MonthlySalesVO(month, salesByMonth.getOrDefault(month, 0L)));
+        }
+        return ResponseDto.success(result);
     }
 
 

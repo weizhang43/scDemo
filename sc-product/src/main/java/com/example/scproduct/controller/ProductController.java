@@ -10,6 +10,7 @@ import com.example.scproduct.auth.AudienceScope;
 import com.example.scproduct.service.ExportTaskService;
 import com.example.scproduct.service.ProductService;
 import com.example.scproduct.vo.ExportTaskVO;
+import com.example.scproduct.vo.ProductTypeCountVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -48,6 +49,12 @@ public class ProductController {
     @GetMapping("/warning/expiring")
     public ResponseDto<Product> expiringSoon() {
         return productService.listExpiringSoon(AudienceResolver.current());
+    }
+
+    /** 统计报表：按商品类型分组计数 */
+    @GetMapping("/statistics/typeCount")
+    public ResponseDto<ProductTypeCountVO> typeCount() {
+        return productService.countByType(AudienceResolver.current());
     }
 
     /** 首页预警：库存不足的商品（阈值默认 100） */

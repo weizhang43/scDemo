@@ -6,9 +6,11 @@ import com.curry.model.Product;
 import com.example.scorder.auth.OrderScope;
 import com.example.scorder.dto.PlaceOrderRequest;
 import com.example.scorder.dto.SeckillRequest;
+import com.example.scorder.vo.MonthlySalesVO;
 import com.example.scorder.vo.OrderTimeoutVO;
 import com.example.scorder.vo.ProductSalesRankVO;
 import com.example.scorder.vo.SeckillResultVO;
+import com.example.scorder.vo.TypeSalesVO;
 import response.ResponseDto;
 
 import javax.servlet.http.HttpServletResponse;
@@ -37,6 +39,17 @@ public interface OrderService extends IService<Order> {
      * 顾客首页：商品销量榜，销量由 t_order_item 聚合，价格与图片经 Feign 从 sc-product 补齐。
      */
     ResponseDto<ProductSalesRankVO> listSalesRank(int limit);
+
+    /**
+     * 统计报表：销量按商品类型分组（仅统计已下单/已完成订单）。
+     * merchantId 非 null 时只统计该商家商品与公共商品。
+     */
+    ResponseDto<TypeSalesVO> listTypeSales(Integer merchantId);
+
+    /**
+     * 统计报表：近三个自然月（含当月）每月销量，无销量的月份补 0。
+     */
+    ResponseDto<MonthlySalesVO> listMonthlySales(Integer merchantId);
 
 
     /**

@@ -17,6 +17,7 @@ import com.example.scproduct.service.ProductService;
 import com.example.scproduct.service.PromotionService;
 import com.example.scproduct.service.SeckillActivityService;
 import com.example.scproduct.vo.ProductExportVO;
+import com.example.scproduct.vo.ProductTypeCountVO;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.redisson.api.RMap;
@@ -83,6 +84,11 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
         product.setStock(10000);
         productMapper.insert(product);
         return ResponseDto.success(null);
+    }
+
+    @Override
+    public ResponseDto<ProductTypeCountVO> countByType(AudienceScope scope) {
+        return ResponseDto.success(productMapper.selectCountByType(scope.getMerchantId()));
     }
 
     @Override
