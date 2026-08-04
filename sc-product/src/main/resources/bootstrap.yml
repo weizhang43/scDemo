@@ -12,6 +12,11 @@ spring:
   application:
     # 应用名称
     name: sc-product
+  # 数据库连接池：三服务共用同一 MySQL 实例，显式设定避免默认 10 连接在高峰期争抢
+  datasource:
+    hikari:
+      maximum-pool-size: 16
+      minimum-idle: 4
   profiles:
     # 环境配置
     active: test
@@ -87,7 +92,7 @@ redisson:
 # 服务间内部调用令牌（sc-job 定时任务等无用户上下文场景），需与调用方配置一致
 inner:
   auth:
-    token: sc-inner-token-2024
+    token: ${SC_INNER_TOKEN:sc-inner-token-dev}
 
 # chat 服务地址（AI 补商品描述任务使用）
 scdemo:

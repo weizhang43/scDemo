@@ -24,12 +24,6 @@ public interface OrderFeignService {
     Product getProduct();
 
     /**
-     * 远程触发 sc-product 创建商品（演示链路）。
-     */
-    @PostMapping("/product/createProduct")
-    ResponseDto<Product> createProduct();
-
-    /**
      * 扣减库存（旧版），不预校验，库存不足直接失败。
      * @param products 待扣减的商品列表（pId + stock）
      */

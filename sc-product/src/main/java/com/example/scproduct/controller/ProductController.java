@@ -26,10 +26,8 @@ import org.springframework.web.bind.annotation.RestController;
 import response.ResponseDto;
 
 import javax.servlet.http.HttpServletResponse;
-import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
-import java.util.Random;
 
 @RestController
 @RequestMapping(value = "/product")
@@ -40,10 +38,6 @@ public class ProductController {
 
     @Autowired
     private ExportTaskService exportTaskService;
-
-    private static final List<String> PRODUCT_LIST =
-            Arrays.asList("垃圾袋", "手机","电脑","衣服","雨伞",
-                    "零食","汽车","饮料","电风扇","手机壳");
 
     /** 首页预警：三个月内即将过期的商品 */
     @GetMapping("/warning/expiring")
@@ -73,26 +67,6 @@ public class ProductController {
     @GetMapping("/rank/newest")
     public ResponseDto<Product> newest(@RequestParam(value = "limit", defaultValue = "8") int limit) {
         return productService.listNewest(Math.min(Math.max(limit, 1), 50), AudienceResolver.current());
-    }
-
-
-
-    /**
-     * 批量生成 100 条随机商品（演示链路），通过 saveBatch 分批入库。
-     */
-    @PostMapping("/createProduct")
-    public ResponseDto<Product> createProduct() {
-        List<Product> productList = new java.util.ArrayList<>();
-        for(int i=0; i<100; i++){
-            Product product = new Product();
-            Random rand = new Random();
-            int randomNumber = rand.nextInt(10);
-            product.setPName(PRODUCT_LIST.get(randomNumber));
-            product.setPrice((randomNumber+i)*100);
-            productList.add(product);
-        }
-        productService.saveBatch(productList,5);
-        return ResponseDto.success(null);
     }
 
     /**

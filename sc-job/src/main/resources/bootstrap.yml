@@ -39,15 +39,20 @@ xxl:
       logpath: ./xxl-job/jobhandler
       logretentiondays: 30
 
-# Feign 超时：handleProDescJob / dealProductImage 等长任务可能运行数十分钟
+# Feign 超时：普通接口用 60s 默认值；
+# 长任务（fillProDesc / rebuildProDescIndex / dealProductImage，可能运行数十分钟）
+# 走独立 contextId sc-product-long-job，单独放宽到 30 分钟，不再作为 default 波及短接口
 feign:
   client:
     config:
       default:
+        connectTimeout: 5000
+        readTimeout: 60000
+      sc-product-long-job:
         connectTimeout: 5000
         readTimeout: 1800000
 
 # 服务间内部调用令牌，需与下游服务（sc-product 等）配置一致
 inner:
   auth:
-    token: sc-inner-token-2024
+    token: ${SC_INNER_TOKEN:sc-inner-token-dev}

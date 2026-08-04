@@ -18,6 +18,7 @@ import com.example.scproduct.service.PromotionService;
 import com.example.scproduct.service.SeckillActivityService;
 import com.example.scproduct.vo.ProductExportVO;
 import com.example.scproduct.vo.ProductTypeCountVO;
+import exception.BusinessException;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.redisson.api.RMap;
@@ -72,19 +73,6 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
     /** 上架状态：1-上架 0-下架 */
     private static final int STATUS_ON_SALE = 1;
     private static final int STATUS_OFF_SHELF = 0;
-
-    /**
-     * 演示链路：插入一条固定垃圾袋商品。
-     */
-    @Override
-    public ResponseDto<Product> addProduct() {
-        Product product = new Product();
-        product.setPName("垃圾袋");
-        product.setPrice(200);
-        product.setStock(10000);
-        productMapper.insert(product);
-        return ResponseDto.success(null);
-    }
 
     @Override
     public ResponseDto<ProductTypeCountVO> countByType(AudienceScope scope) {
@@ -403,24 +391,14 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
         return flushed;
     }
 
+    /**
+     * @deprecated 旧扣减入口，历史实现为无锁的查-改-写，并发下会超卖。
+     * 现委托给 {@link #checkAndDeductStock}，仅为兼容既有 /product/deductStock 端点保留。
+     */
+    @Deprecated
     @Override
     public ResponseDto<Product> deductStock(List<Product> products) {
-        if (products == null || products.isEmpty()) {
-            return ResponseDto.error("下单商品列表为空");
-        }
-        for (Product item : products) {
-            Product db = productMapper.selectById(item.getPId());
-            if (db == null) {
-                return ResponseDto.error("商品不存在: id=" + item.getPId());
-            }
-            int need = item.getStock() == null ? 0 : item.getStock();
-            if (db.getStock() == null || db.getStock() < need) {
-                return ResponseDto.error("库存不足：" + db.getPName());
-            }
-            db.setStock(db.getStock() - need);
-            productMapper.updateById(db);
-        }
-        return ResponseDto.success(null);
+        return checkAndDeductStock(products);
     }
 
     /**
@@ -441,7 +419,11 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
                 return ResponseDto.error("下单数量必须大于0: pId=" + pId);
             }
         }
-        // 对每个商品依次加分布式锁后扣减；任一失败抛错，@GlobalTransactional 回滚此前已扣的
+        // 对每个商品依次加分布式锁后扣减。
+        // 扣减循环内的任何失败都必须抛 BusinessException 而不是 return error：
+        // return 属于正常返回，本地 @Transactional 会提交此前已扣商品，造成"部分扣减"；
+        // 抛异常才能触发本地回滚（以及上游 Seata @GlobalTransactional 的全局回滚）。
+        // 异常由 GlobalExceptionHandler 转成 ResponseDto.error，Feign 调用方语义不变。
         for (Product item : items) {
             Integer pId = item.getPId();
             int need = item.getStock();
@@ -451,15 +433,15 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
             try {
                 locked = lock.tryLock(3, 30, TimeUnit.SECONDS);
                 if (!locked) {
-                    return ResponseDto.error("下单繁忙，请稍后重试: pId=" + pId);
+                    throw new BusinessException("下单繁忙，请稍后重试: pId=" + pId);
                 }
                 // 锁内：先查库存快照（给业务返回友好提示）
                 Product db = productMapper.selectById(pId);
                 if (db == null) {
-                    return ResponseDto.error("商品不存在: id=" + pId);
+                    throw new BusinessException("商品不存在: id=" + pId);
                 }
                 if (db.getStock() == null || db.getStock() < need) {
-                    return ResponseDto.error("库存不足：" + db.getPName()
+                    throw new BusinessException("库存不足：" + db.getPName()
                             + "（剩余 " + (db.getStock() == null ? 0 : db.getStock()) + "）");
                 }
                 // 锁内条件 UPDATE：兜底防超卖，应对锁内意外并发/事务延迟
@@ -469,11 +451,11 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
                                 .ge(Product::getStock, need)
                                 .setSql("stock = stock - " + need));
                 if (rows == 0) {
-                    return ResponseDto.error("库存不足（并发）：pId=" + pId);
+                    throw new BusinessException("库存不足（并发）：pId=" + pId);
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                return ResponseDto.error("加锁中断: pId=" + pId);
+                throw new BusinessException("加锁中断: pId=" + pId, e);
             } finally {
                 if (locked && lock.isHeldByCurrentThread()) {
                     lock.unlock();
@@ -498,25 +480,14 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
     @Transactional(rollbackFor = Exception.class)
     public String markExpiredProducts() {
         long start = System.currentTimeMillis();
-        // 一、把日期已过期、但标记还停在 is_expired=0 的商品刷成过期
-        List<Product> notExpired = productMapper.selectList(
-                new LambdaQueryWrapper<Product>().eq(Product::getIsExpired, 0)
-        );
-        long now = System.currentTimeMillis();
-        List<Integer> expiredIds = notExpired.stream()
-                .filter(p -> p.getProductionDate() != null && p.getShelfLife() != null)
-                .filter(p -> {
-                    long shelfMs = p.getShelfLife() * 24L * 60L * 60L * 1000L;
-                    return p.getProductionDate().getTime() + shelfMs < now;
-                })
-                .map(Product::getPId)
-                .collect(Collectors.toList());
-        int marked = 0;
-        if (!expiredIds.isEmpty()) {
-            marked = productMapper.update(null, new LambdaUpdateWrapper<Product>()
-                    .in(Product::getPId, expiredIds)
-                    .set(Product::getIsExpired, 1));
-        }
+        // 一、把日期已过期、但标记还停在 is_expired=0 的商品刷成过期。
+        //     过期判断直接下推到 SQL，避免全表拉到内存过滤（数据量大时 OOM）
+        int marked = productMapper.update(null, new LambdaUpdateWrapper<Product>()
+                .eq(Product::getIsExpired, 0)
+                .isNotNull(Product::getProductionDate)
+                .isNotNull(Product::getShelfLife)
+                .apply("DATE_ADD(production_date, INTERVAL shelf_life DAY) < NOW()")
+                .set(Product::getIsExpired, 1));
         // 二、过期商品一律下架。故意用独立一条 SQL 而不是并进上面的 set：这样除了本轮新过期的，
         //     历史遗留的「已过期仍在售」和商家手工重新上架的过期商品也会一并被收下架。
         //     status 为 NULL 的行不参与（顾客侧本就只看 status=1，等价于已下架）。
@@ -542,19 +513,39 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
         LambdaQueryWrapper<Product> queryWrapper = buildListWrapper(pName, proDesc, productionDateStart,
                 productionDateEnd, origin, isExpired, scope);
         queryWrapper.orderByDesc(Product::getPId);
-        List<Product> list = productMapper.selectList(queryWrapper);
-        List<ProductExportVO> rows = new java.util.ArrayList<>();
-        for (int i = 0; i < list.size(); i++) {
-            rows.add(ProductExportVO.of(list.get(i), i + 1));
-        }
 
         response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
         response.setCharacterEncoding("utf-8");
         String fileName = URLEncoder.encode("商品列表", "UTF-8").replaceAll("\\+", "%20");
         response.setHeader("Content-disposition", "attachment;filename*=UTF-8''" + fileName + ".xlsx");
-        EasyExcel.write(response.getOutputStream(), ProductExportVO.class)
-                .sheet("商品列表")
-                .doWrite(rows);
+
+        // 分页查询 + 复用 ExcelWriter 分批写入，避免全量载入内存
+        int pageSize = 1000;
+        try (ExcelWriter writer = EasyExcel.write(response.getOutputStream(), ProductExportVO.class).build()) {
+            WriteSheet sheet = EasyExcel.writerSheet("商品列表").build();
+            int pageNo = 1;
+            int serial = 0;
+            while (true) {
+                Page<Product> page = new Page<>(pageNo, pageSize, false);
+                List<Product> records = productMapper.selectPage(page, queryWrapper).getRecords();
+                if (records == null || records.isEmpty()) {
+                    if (pageNo == 1) {
+                        // 空数据也要写一次空列表，保证导出文件带表头
+                        writer.write(new ArrayList<ProductExportVO>(), sheet);
+                    }
+                    break;
+                }
+                List<ProductExportVO> rows = new ArrayList<>(records.size());
+                for (Product product : records) {
+                    rows.add(ProductExportVO.of(product, ++serial));
+                }
+                writer.write(rows, sheet);
+                if (records.size() < pageSize) {
+                    break;
+                }
+                pageNo++;
+            }
+        }
     }
 
     @Override

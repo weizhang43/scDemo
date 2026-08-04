@@ -60,7 +60,6 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
             "/user/chat",
             "/user/parseImage",
             "/user/generateImage",
-            "/product/createProduct",
             "/actuator/**"
     };
 

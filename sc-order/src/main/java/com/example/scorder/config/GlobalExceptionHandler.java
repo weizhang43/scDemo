@@ -1,26 +1,14 @@
-package com.example.scuser.config;
+package com.example.scorder.config;
 
 import exception.BusinessException;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.validation.FieldError;
-import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import response.ResponseDto;
 
-import java.util.stream.Collectors;
-
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
-
-    @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseDto handleValidException(MethodArgumentNotValidException e) {
-        String msg = e.getBindingResult().getFieldErrors().stream()
-                .map(FieldError::getDefaultMessage)
-                .collect(Collectors.joining("; "));
-        return ResponseDto.error(msg);
-    }
 
     /** 业务异常：提示语直接返回给调用方，HTTP 200 + code=500，保持 Feign 调用方按 code 判断的语义 */
     @ExceptionHandler(BusinessException.class)

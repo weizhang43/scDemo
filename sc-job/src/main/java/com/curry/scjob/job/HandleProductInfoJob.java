@@ -1,6 +1,6 @@
 package com.curry.scjob.job;
 
-import com.curry.scjob.service.ProductFeignService;
+import com.curry.scjob.service.ProductLongJobFeignService;
 import com.xxl.job.core.handler.annotation.XxlJob;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,7 +21,7 @@ import static response.ResponseDto.SUCCESS_CODE;
 public class HandleProductInfoJob {
 
     @Autowired
-    private ProductFeignService productFeignService;
+    private ProductLongJobFeignService productLongJobFeignService;
 
     /**
      * 调度名称：handleProDescJob
@@ -34,7 +34,7 @@ public class HandleProductInfoJob {
         log.info("[handleProDescJob] start, scanTime={}", now);
         long start = System.currentTimeMillis();
         try {
-            ResponseDto<String> resp = productFeignService.fillProDesc();
+            ResponseDto<String> resp = productLongJobFeignService.fillProDesc();
             if (resp == null || !SUCCESS_CODE.equals(resp.getCode())) {
                 throw new RuntimeException("sc-product fillProDesc fail, resp=" + resp);
             }
@@ -54,7 +54,7 @@ public class HandleProductInfoJob {
     public void rebuildAll() {
         long start = System.currentTimeMillis();
         try {
-            ResponseDto<String> resp = productFeignService.rebuildProDescIndex();
+            ResponseDto<String> resp = productLongJobFeignService.rebuildProDescIndex();
             if (resp == null || !SUCCESS_CODE.equals(resp.getCode())) {
                 throw new RuntimeException("sc-product rebuildProDescIndex fail, resp=" + resp);
             }
@@ -75,7 +75,7 @@ public class HandleProductInfoJob {
         long start = System.currentTimeMillis();
         log.info("[dealProductImage] start");
         try {
-            ResponseDto<String> resp = productFeignService.dealProductImage();
+            ResponseDto<String> resp = productLongJobFeignService.dealProductImage();
             if (resp == null || !SUCCESS_CODE.equals(resp.getCode())) {
                 throw new RuntimeException("sc-product dealProductImage fail, resp=" + resp);
             }

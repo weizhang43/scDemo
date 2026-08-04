@@ -12,11 +12,6 @@ import java.util.List;
 
 public interface ProductService extends IService<Product> {
     /**
-     * 演示链路：插入一条固定名称的垃圾袋商品（演示链路，仅用于联调）。
-     */
-    ResponseDto<Product> addProduct();
-
-    /**
      * 首页预警：查询三个月内即将过期的商品（到期日=生产日期+保质期天数）。
      */
     ResponseDto<Product> listExpiringSoon(AudienceScope scope);

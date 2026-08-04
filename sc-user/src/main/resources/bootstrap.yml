@@ -68,4 +68,4 @@ spring:
 # 服务间内部调用令牌（校验其它模块转发来的操作日志），需与各调用方一致
 inner:
   auth:
-    token: sc-inner-token-2024
+    token: ${SC_INNER_TOKEN:sc-inner-token-dev}

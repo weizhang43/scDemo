@@ -15,12 +15,6 @@ import java.util.Map;
 public interface OrderMapper extends BaseMapper<Order> {
 
     /**
-     * 查询当日订单数量（用于生成流水号）
-     */
-    @Select("SELECT COUNT(*) FROM t_order WHERE order_no LIKE CONCAT('ORD', #{dayPrefix}, '%')")
-    int countByDay(@Param("dayPrefix") String dayPrefix);
-
-    /**
      * 基于 version + 前置 order_status 的 CAS 更新。
      * rows==0 表示状态已被其他请求变更或 version 不匹配，调用方据此做幂等返回。
      */

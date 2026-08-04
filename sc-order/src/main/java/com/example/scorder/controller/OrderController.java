@@ -103,14 +103,6 @@ public class OrderController {
     }
 
     /**
-     * 调用 Service 创建订单（演示链路）。
-     */
-    @PostMapping("/createOrder")
-    public ResponseDto<Order> createOrder() {
-        return orderService.addOrder();
-    }
-
-    /**
      * 按主键查询订单。顾客访问他人订单时返回 null（200 空 body），前端落到"未找到订单信息"。
      */
     @GetMapping("/{id}")

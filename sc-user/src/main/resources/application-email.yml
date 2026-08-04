@@ -2,8 +2,8 @@ spring:
   mail:
     host: smtp.qq.com
     port: 465
-    username: 1602043766@qq.com
-    password: moitbyukbxnfgdif  # 授权码
+    username: ${MAIL_USERNAME:1602043766@qq.com}
+    password: ${MAIL_AUTH_CODE:}  # QQ 邮箱授权码，从环境变量读取，禁止写进仓库
     default-encoding: UTF-8
     properties:
       mail:

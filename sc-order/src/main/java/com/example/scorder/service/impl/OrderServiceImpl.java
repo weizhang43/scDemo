@@ -1,6 +1,8 @@
 package com.example.scorder.service.impl;
 
 import com.alibaba.excel.EasyExcel;
+import com.alibaba.excel.ExcelWriter;
+import com.alibaba.excel.write.metadata.WriteSheet;
 import com.alibaba.fastjson.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -26,6 +28,7 @@ import com.example.scorder.vo.SeckillResultVO;
 import com.example.scorder.vo.TypeSalesVO;
 import io.seata.spring.annotation.GlobalTransactional;
 import lombok.extern.slf4j.Slf4j;
+import org.redisson.api.RAtomicLong;
 import org.redisson.api.RBucket;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
@@ -97,29 +100,6 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     /** 订单超时时长（分钟）：状态为0的订单以 createTime + 该时长作为倒计时到期点 */
     @Value("${order-timeout-minute:30}")
     private Integer orderTimeOutMinute;
-
-    /**
-     * 演示链路：本地创建订单 + Feign 远程创建商品，外加一次 1/0 异常。
-     * 通过 @GlobalTransactional 让 Seata 协调跨服务事务，远程调用失败会触发全局回滚。
-     */
-    @Override
-    @GlobalTransactional //开启事务
-    public ResponseDto<Order> addOrder() {
-        Order order = new Order();
-        order.setAddPerson("curry");
-        order.setCreateTime(new Date());
-        order.setOrderStatus(1);
-        order.setOrderNo(generateOrderNo());
-        //创建订单
-        orderMapper.insert(order);
-        //远程调用添加商品
-        orderFeignService.createProduct();
-
-        int a = 1/0;
-
-        return ResponseDto.success(null);
-
-    }
 
     @Override
     public ResponseDto<OrderTimeoutVO> listTimeoutWarning() {
@@ -260,7 +240,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     }
 
     /**
-     * 按查询条件导出订单 Excel：使用 EasyExcel 直接写入 HttpServletResponse 输出流。
+     * 按查询条件导出订单 Excel：分页查询 + 复用 ExcelWriter 分批写入响应流，
+     * 避免一次性 selectList 全量载入内存（数据量大时 OOM）。
      * @param response Servlet 响应，文件名以 UTF-8 编码避免中文乱码
      */
     @Override
@@ -273,19 +254,38 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 .le(createTimeEnd != null, Order::getCreateTime, createTimeEnd)
                 .orderByDesc(Order::getCreateTime)
                 .orderByDesc(Order::getOId);
-        List<Order> list = orderMapper.selectList(queryWrapper);
-        List<OrderExportVO> rows = new ArrayList<>();
-        for (int i = 0; i < list.size(); i++) {
-            rows.add(OrderExportVO.of(list.get(i), i + 1));
-        }
 
         response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
         response.setCharacterEncoding("utf-8");
         String fileName = URLEncoder.encode("订单列表", "UTF-8").replaceAll("\\+", "%20");
         response.setHeader("Content-disposition", "attachment;filename*=UTF-8''" + fileName + ".xlsx");
-        EasyExcel.write(response.getOutputStream(), OrderExportVO.class)
-                .sheet("订单列表")
-                .doWrite(rows);
+
+        int pageSize = 1000;
+        try (ExcelWriter writer = EasyExcel.write(response.getOutputStream(), OrderExportVO.class).build()) {
+            WriteSheet sheet = EasyExcel.writerSheet("订单列表").build();
+            int pageNo = 1;
+            int serial = 0;
+            while (true) {
+                Page<Order> page = new Page<>(pageNo, pageSize, false);
+                List<Order> records = orderMapper.selectPage(page, queryWrapper).getRecords();
+                if (records == null || records.isEmpty()) {
+                    if (pageNo == 1) {
+                        // 空数据也要写一次空列表，保证导出文件带表头
+                        writer.write(new ArrayList<OrderExportVO>(), sheet);
+                    }
+                    break;
+                }
+                List<OrderExportVO> rows = new ArrayList<>(records.size());
+                for (Order order : records) {
+                    rows.add(OrderExportVO.of(order, ++serial));
+                }
+                writer.write(rows, sheet);
+                if (records.size() < pageSize) {
+                    break;
+                }
+                pageNo++;
+            }
+        }
     }
 
     /**
@@ -465,15 +465,18 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     }
 
     /**
-     * 生成订单编号：ORD + yyyyMMdd + 4位流水号(当日下单数量+1)
-     * 流水号基于"当日已存在的订单数 + 1"。
-     * 注意：高并发下可能存在并发冲突，需配合唯一索引兜底重试。
+     * 生成订单编号：ORD + yyyyMMdd + 流水号（当日 Redis 自增，至少 4 位）。
+     * 旧实现基于 count(当日订单)+1，并发下会生成重复单号；Redis INCR 原子自增无此问题。
      */
     private String generateOrderNo() {
         SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMdd");
         String dayPrefix = sdf.format(new Date());
-        int count = orderMapper.countByDay(dayPrefix);
-        int seq = count + 1;
+        RAtomicLong seqCounter = redissonClient.getAtomicLong("order:no:seq:" + dayPrefix);
+        long seq = seqCounter.incrementAndGet();
+        if (seq == 1) {
+            // 跨天后旧 key 不再使用，两天后自动清理
+            seqCounter.expire(2, TimeUnit.DAYS);
+        }
         DecimalFormat df = new DecimalFormat("0000");
         return "ORD" + dayPrefix + df.format(seq);
     }

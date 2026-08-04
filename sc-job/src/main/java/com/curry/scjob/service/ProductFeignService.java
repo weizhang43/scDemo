@@ -6,7 +6,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import response.ResponseDto;
 
 @Component
-@FeignClient(value = "sc-product", path = "/sc-product")
+@FeignClient(value = "sc-product", contextId = "sc-product", path = "/sc-product")
 public interface ProductFeignService {
 
     /**
@@ -20,22 +20,4 @@ public interface ProductFeignService {
      */
     @PostMapping("/product/job/markExpired")
     ResponseDto<String> markExpired();
-
-    /**
-     * AI 补商品描述并同步 ES，返回执行摘要。
-     */
-    @PostMapping("/product/job/fillProDesc")
-    ResponseDto<String> fillProDesc();
-
-    /**
-     * 全量重建商品描述 ES 索引，返回执行摘要。
-     */
-    @PostMapping("/product/job/rebuildProDescIndex")
-    ResponseDto<String> rebuildProDescIndex();
-
-    /**
-     * 为无图商品随机绑定本地图片，返回执行摘要。
-     */
-    @PostMapping("/product/job/dealProductImage")
-    ResponseDto<String> dealProductImage();
 }
