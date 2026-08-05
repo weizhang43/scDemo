@@ -36,6 +36,12 @@ public class StockRestoreMsgConsumer {
     private OrderItemMapper orderItemMapper;
 
     @Autowired
+    private com.example.scorder.mapper.OrderMapper orderMapper;
+
+    @Autowired
+    private com.example.scorder.client.CouponClient couponClient;
+
+    @Autowired
     private OrderFeignService orderFeignService;
 
     private static final int BATCH_SIZE = 50;
@@ -70,6 +76,12 @@ public class StockRestoreMsgConsumer {
      */
     @Transactional(rollbackFor = Exception.class)
     public void processOne(OrderStockRestoreMsg msg) {
+        // 先返还优惠券再回库存：券返还幂等(1|2→0)可自由重试，
+        // addStock 不幂等 —— 若放在后面失败重试会重复加库存
+        if (!restoreCouponIfAny(msg)) {
+            markRetryOrFail(msg);
+            return;
+        }
         List<OrderItem> items = orderItemMapper.selectList(
                 new LambdaQueryWrapper<OrderItem>().eq(OrderItem::getOId, msg.getOId()));
         if (items == null || items.isEmpty()) {
@@ -90,14 +102,40 @@ public class StockRestoreMsgConsumer {
             return;
         }
         if (resp != null && SUCCESS_CODE.equals(resp.getCode())) {
-            // 成功：删除订单明细 + 置 msg status=1
-            orderItemMapper.delete(new LambdaQueryWrapper<OrderItem>().eq(OrderItem::getOId, msg.getOId()));
+            // 成功：置 msg status=1；仅取消来源(source=0)删除订单明细 ——
+            // 售后退款(source=1)的订单仍存续，明细要留着供详情页与评价展示
+            if (msg.getSource() == null || msg.getSource() == 0) {
+                orderItemMapper.delete(new LambdaQueryWrapper<OrderItem>().eq(OrderItem::getOId, msg.getOId()));
+            }
             markDone(msg);
         } else {
             log.warn("addStock 业务失败 msgId={} oId={} msg={}", msg.getId(), msg.getOId(),
                     resp == null ? "null" : resp.getMsg());
             markRetryOrFail(msg);
         }
+    }
+
+    /**
+     * 订单用了券则调 sc-product 返还（取消与售后退款两条链路共用）。
+     * 返回 false 表示需要重试；无券或返还成功返回 true。
+     */
+    private boolean restoreCouponIfAny(OrderStockRestoreMsg msg) {
+        com.curry.model.Order order = orderMapper.selectById(msg.getOId());
+        if (order == null || order.getCouponId() == null) {
+            return true;
+        }
+        try {
+            ResponseDto<Object> resp = couponClient.restore(order.getCouponId());
+            if (resp != null && SUCCESS_CODE.equals(resp.getCode())) {
+                return true;
+            }
+            log.warn("券返还业务失败 msgId={} oId={} couponId={} msg={}", msg.getId(), msg.getOId(),
+                    order.getCouponId(), resp == null ? "null" : resp.getMsg());
+        } catch (Exception ex) {
+            log.warn("调券返还异常 msgId={} oId={} couponId={}，触发重试",
+                    msg.getId(), msg.getOId(), order.getCouponId(), ex);
+        }
+        return false;
     }
 
     private void markDone(OrderStockRestoreMsg msg) {

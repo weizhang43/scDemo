@@ -18,7 +18,8 @@ public interface OrderMapper extends BaseMapper<Order> {
      * 基于 version + 前置 order_status 的 CAS 更新。
      * rows==0 表示状态已被其他请求变更或 version 不匹配，调用方据此做幂等返回。
      */
-    @Update("UPDATE t_order SET order_status=#{targetStatus}, version=version+1, update_time=NOW() " +
+    @Update("UPDATE t_order SET order_status=#{targetStatus}, version=version+1, update_time=NOW(), " +
+            "receive_time = CASE WHEN #{targetStatus}=2 THEN NOW() ELSE receive_time END " +
             "WHERE o_id=#{id} AND order_status=#{expectStatus} AND version=#{version}")
     int casUpdateStatus(@Param("id") Integer id,
                         @Param("expectStatus") Integer expectStatus,
@@ -26,17 +27,32 @@ public interface OrderMapper extends BaseMapper<Order> {
                         @Param("version") Integer version);
 
     /**
+     * 商家发货 CAS：1(已支付)→3(已发货)，同一条 UPDATE 内写入快递信息与发货时间，
+     * 避免"先改状态再补快递字段"两步之间被并发请求观察到中间态。
+     */
+    @Update("UPDATE t_order SET order_status=3, version=version+1, update_time=NOW(), " +
+            "shipping_company=#{shippingCompany}, tracking_no=#{trackingNo}, ship_time=NOW() " +
+            "WHERE o_id=#{id} AND order_status=1 AND version=#{version}")
+    int casShip(@Param("id") Integer id,
+                @Param("version") Integer version,
+                @Param("shippingCompany") String shippingCompany,
+                @Param("trackingNo") String trackingNo);
+
+    /**
      * 联表分页查询：用 t_user.u_name 替换 t_order.add_person（add_person 存的是 uName）。
      * 关键字 key 同时匹配 u_name / real_name / add_person。
      * uId 非空时只查该顾客的订单（顾客侧强制归属过滤，商家/管理员传 null）。
+     * 售后状态联 t_after_sale 现取（订单不设"售后中"状态，售后态由工单维护）。
      */
     @Select({
             "<script>",
             "SELECT o.o_id, o.order_no, o.create_time, o.order_address,",
             "       o.order_amount, o.order_status, o.u_id,",
-            "       COALESCE(u.real_name, o.add_person) AS add_person",
+            "       COALESCE(u.real_name, o.add_person) AS add_person,",
+            "       a.status AS after_sale_status",
             "FROM t_order o",
             "LEFT JOIN t_user u ON o.add_person = u.u_name",
+            "LEFT JOIN t_after_sale a ON a.o_id = o.o_id",
             "<where>",
             "  <if test='uId != null'>",
             "    AND o.u_id = #{uId}",

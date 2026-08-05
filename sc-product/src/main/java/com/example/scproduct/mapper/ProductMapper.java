@@ -29,10 +29,14 @@ public interface ProductMapper extends BaseMapper<Product> {
     @Select("<script>" +
             "SELECT p.p_id, p.p_name, p.price, p.stock, p.production_date, p.shelf_life, p.origin, " +
             "       p.is_expired, p.manufacturer, p.pro_desc, p.image_url, p.merchant_id, p.status, " +
+            "       p.category_id, c.c_name AS category_name, " +
             "       COALESCE(s.sale_count, 0) AS sale_count, " +
             "       COALESCE(r.review_count, 0) AS review_count, " +
             "       COALESCE(l.like_total, 0) AS like_count " +
             "FROM t_product p " +
+            // t_category 也有 status 列，直接联表会让 wrapper 的裸 status 条件产生歧义，
+            // 所以走只含所需列的派生表，键列照例起别名
+            "LEFT JOIN (SELECT id AS c_id, name AS c_name FROM t_category) c ON c.c_id = p.category_id " +
             "LEFT JOIN (SELECT i.p_id AS s_pid, SUM(i.quantity) AS sale_count " +
             "           FROM t_order_item i JOIN t_order o ON o.o_id = i.o_id " +
             "           WHERE o.order_status IN (1, 2) GROUP BY i.p_id) s ON s.s_pid = p.p_id " +
@@ -74,12 +78,17 @@ public interface ProductMapper extends BaseMapper<Product> {
                                        @Param("onSaleOnly") boolean onSaleOnly);
 
     /**
-     * 按商品类型分组计数。merchantId 非 null 时只统计该商家商品与公共商品（与商家可见范围一致）。
+     * 按一级分类分组计数：二级分类通过 IF(parent_id=0, id, parent_id) 归并到根分类。
+     * category_id 为 NULL 或指向已删除分类的商品归入 categoryId=NULL 组（前端显示「未分类」）。
+     * merchantId 非 null 时只统计该商家商品与公共商品（与商家可见范围一致）。
      */
     @Select("<script>" +
-            "SELECT p_type AS pType, COUNT(*) AS cnt FROM t_product " +
-            "<if test='merchantId != null'> WHERE (merchant_id = #{merchantId} OR merchant_id IS NULL) </if>" +
-            "GROUP BY p_type ORDER BY p_type" +
+            "SELECT root.id AS categoryId, root.name AS categoryName, COUNT(*) AS cnt " +
+            "FROM t_product p " +
+            "LEFT JOIN t_category c ON c.id = p.category_id " +
+            "LEFT JOIN t_category root ON root.id = IF(c.parent_id = 0, c.id, c.parent_id) " +
+            "<if test='merchantId != null'> WHERE (p.merchant_id = #{merchantId} OR p.merchant_id IS NULL) </if>" +
+            "GROUP BY root.id, root.name ORDER BY root.id" +
             "</script>")
     List<ProductTypeCountVO> selectCountByType(@Param("merchantId") Integer merchantId);
 

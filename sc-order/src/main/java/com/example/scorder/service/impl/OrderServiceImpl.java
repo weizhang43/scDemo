@@ -4,6 +4,7 @@ import com.alibaba.excel.EasyExcel;
 import com.alibaba.excel.ExcelWriter;
 import com.alibaba.excel.write.metadata.WriteSheet;
 import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -13,6 +14,7 @@ import com.example.scorder.config.RabbitMqConfig;
 import com.example.scorder.dto.PlaceOrderRequest;
 import com.example.scorder.dto.SeckillRequest;
 import com.example.scorder.entity.OrderStockRestoreMsg;
+import com.example.scorder.entity.PayRecord;
 import com.example.scorder.mapper.OrderItemMapper;
 import com.example.scorder.mapper.OrderMapper;
 import com.example.scorder.mapper.OrderStockRestoreMsgMapper;
@@ -26,6 +28,7 @@ import com.example.scorder.vo.OrderTimeoutVO;
 import com.example.scorder.vo.ProductSalesRankVO;
 import com.example.scorder.vo.SeckillResultVO;
 import com.example.scorder.vo.TypeSalesVO;
+import exception.BusinessException;
 import io.seata.spring.annotation.GlobalTransactional;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RAtomicLong;
@@ -81,6 +84,18 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     private OrderStockRestoreMsgMapper orderStockRestoreMsgMapper;
 
     @Autowired
+    private com.example.scorder.mapper.AfterSaleMapper afterSaleMapper;
+
+    @Autowired
+    private com.example.scorder.service.PayService payService;
+
+    @Autowired
+    private com.example.scorder.client.MockPayGatewayClient mockPayGatewayClient;
+
+    @Autowired
+    private com.example.scorder.client.CouponClient couponClient;
+
+    @Autowired
     private RabbitTemplate rabbitTemplate;
 
     /** 秒杀结果 key 前缀：seckill:result:{uId}:{activityId} */
@@ -90,12 +105,14 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
      * 订单取消状态码
      */
     public static final Integer CANCEL_ORDER_STATUS = -1;
-    /** 待签收状态码 */
+    /** 已支付待发货状态码 */
     public static final Integer PLACED_ORDER_STATUS = 1;
     /** 已完成状态码 */
     public static final Integer COMPLETE_ORDER_STATUS = 2;
     /** 待付款 */
     public static final Integer UN_COMMIT_ORDER_STATUS = 0;
+    /** 已发货待收货状态码 */
+    public static final Integer SHIPPED_ORDER_STATUS = 3;
 
     /** 订单超时时长（分钟）：状态为0的订单以 createTime + 该时长作为倒计时到期点 */
     @Value("${order-timeout-minute:30}")
@@ -225,6 +242,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         Map<String, Long> result = new HashMap<>();
         result.put(String.valueOf(UN_COMMIT_ORDER_STATUS), 0L);
         result.put(String.valueOf(PLACED_ORDER_STATUS), 0L);
+        result.put(String.valueOf(SHIPPED_ORDER_STATUS), 0L);
         result.put(String.valueOf(COMPLETE_ORDER_STATUS), 0L);
         result.put(String.valueOf(CANCEL_ORDER_STATUS), 0L);
         List<Map<String, Object>> rows = orderMapper.countGroupByStatus(key, orderNo, createTimeStart, createTimeEnd, scope.getOwnerUId());
@@ -408,6 +426,33 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             int qty = it.getQuantity() == null ? 0 : it.getQuantity();
             amount = amount.add(price.multiply(BigDecimal.valueOf(qty)));
         }
+
+        // 优惠券：锁券(0→1)并按服务端权威规则取抵扣额，orderAmount 落券后实付。
+        // 库存已扣，此处任何失败必须抛异常走 Seata 全局回滚（连带回滚已扣库存与券锁定），
+        // 直接 return error 会漏放已扣的库存
+        if (request.getCouponId() != null) {
+            ResponseDto<Object> lockResp =
+                    couponClient.lock(request.getCouponId(), request.getUId(), amount);
+            if (lockResp == null || lockResp.getCode() == null || lockResp.getCode() != 200
+                    || lockResp.getDaoResult() == null) {
+                String msg = lockResp == null ? null : lockResp.getMsg();
+                throw new BusinessException(msg == null ? "优惠券不可用" : msg);
+            }
+            JSONObject locked = JSON.parseObject(JSON.toJSONString(lockResp.getDaoResult()));
+            BigDecimal deduction = locked.getBigDecimal("couponAmount");
+            if (deduction == null || deduction.compareTo(BigDecimal.ZERO) < 0) {
+                throw new BusinessException("优惠券抵扣金额异常");
+            }
+            BigDecimal payAmount = amount.subtract(deduction).max(BigDecimal.ZERO);
+            // 页面展示的券后价与服务端重算不符：价格或券规则恰在下单瞬间变化，拒单让用户看到新金额
+            if (request.getExpectedPayAmount() != null
+                    && request.getExpectedPayAmount().compareTo(payAmount) != 0) {
+                throw new BusinessException("订单金额已变化，请刷新后重新下单");
+            }
+            order.setCouponId(request.getCouponId());
+            order.setCouponAmount(deduction);
+            amount = payAmount;
+        }
         order.setOrderAmount(amount);
         orderMapper.insert(order);
 
@@ -495,7 +540,11 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         if (!CANCEL_ORDER_STATUS.equals(orderStatus)
                 && !PLACED_ORDER_STATUS.equals(orderStatus)
                 && !COMPLETE_ORDER_STATUS.equals(orderStatus)) {
-            return ResponseDto.error("订单状态非法(-1:订单取消 1:已支付 2:已完成)");
+            // 已发货(3)必须走 ship 接口带快递信息，禁止通过本接口裸改状态
+            if (SHIPPED_ORDER_STATUS.equals(orderStatus)) {
+                return ResponseDto.error("发货请通过发货接口提交快递信息");
+            }
+            return ResponseDto.error("订单状态非法(-1:订单取消 1:已支付 2:已完成 3:已发货)");
         }
         Order exists = orderMapper.selectById(id);
         if (exists == null) {
@@ -505,7 +554,54 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         if (!scope.canManage(exists.getUId())) {
             return ResponseDto.error("订单不存在");
         }
+        // 支付后门加固：顾客不得直设已支付，0→1 只能由支付回调（PayServiceImpl）驱动
+        if (PLACED_ORDER_STATUS.equals(orderStatus) && !scope.isUnrestricted()) {
+            return ResponseDto.error("请通过收银台完成支付");
+        }
         return doUpdateStatus(exists, orderStatus);
+    }
+
+    /**
+     * 商家发货：仅商家/管理员可操作，1(已支付)→3(已发货)，CAS 同时写入快递公司/单号/发货时间。
+     * 顾客侧确认收货(3→2)走 updateStatus 通用流转。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public ResponseDto<Order> ship(Integer id, String shippingCompany, String trackingNo, OrderScope scope) {
+        if (id == null) {
+            return ResponseDto.error("订单ID不能为空");
+        }
+        if (!StringUtils.hasText(shippingCompany) || !StringUtils.hasText(trackingNo)) {
+            return ResponseDto.error("快递公司与快递单号不能为空");
+        }
+        // 顾客无发货权限；商家/管理员/内部调用 scope 为 unrestricted
+        if (!scope.isUnrestricted()) {
+            return ResponseDto.error("无权执行发货操作");
+        }
+        Order exists = orderMapper.selectById(id);
+        if (exists == null) {
+            return ResponseDto.error("订单不存在");
+        }
+        if (SHIPPED_ORDER_STATUS.equals(exists.getOrderStatus())) {
+            // 已发货视为幂等成功，避免商家重复点击报错
+            return ResponseDto.success(null);
+        }
+        if (!PLACED_ORDER_STATUS.equals(exists.getOrderStatus())) {
+            return ResponseDto.error("仅已支付订单可以发货");
+        }
+        int rows = orderMapper.casShip(id, exists.getVersion(), shippingCompany.trim(), trackingNo.trim());
+        if (rows == 0) {
+            return ResponseDto.error("订单状态已变更，请刷新后重试");
+        }
+        final String addPerson = exists.getAddPerson();
+        final String orderNo = exists.getOrderNo();
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                toSendMail(addPerson, orderNo, SHIPPED_ORDER_STATUS);
+            }
+        });
+        return ResponseDto.success();
     }
 
     /**
@@ -530,7 +626,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     }
 
     /**
-     * 状态流转白名单：0→1 支付、0→-1 取消、1→2 完成、1→-1 取消，其余一律拒绝。
+     * 状态流转白名单：0→1 支付、0→-1 取消、1→3 发货、1→2 直接完成、1→-1 取消、3→2 确认收货。
+     * 保留 1→2 —— 存量已支付订单无发货记录，且虚拟/无需物流商品允许商家直接完成。
+     * 已发货(3)后不可取消，退款走售后工单。
      * 支付(0→1)不触碰库存 —— 库存在下单时已扣减。
      */
     private boolean isTransitionAllowed(Integer currentStatus, Integer targetStatus) {
@@ -538,7 +636,12 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             return PLACED_ORDER_STATUS.equals(targetStatus) || CANCEL_ORDER_STATUS.equals(targetStatus);
         }
         if (Objects.equals(currentStatus, PLACED_ORDER_STATUS)) {
-            return COMPLETE_ORDER_STATUS.equals(targetStatus) || CANCEL_ORDER_STATUS.equals(targetStatus);
+            return SHIPPED_ORDER_STATUS.equals(targetStatus)
+                    || COMPLETE_ORDER_STATUS.equals(targetStatus)
+                    || CANCEL_ORDER_STATUS.equals(targetStatus);
+        }
+        if (Objects.equals(currentStatus, SHIPPED_ORDER_STATUS)) {
+            return COMPLETE_ORDER_STATUS.equals(targetStatus);
         }
         return false;
     }
@@ -577,6 +680,18 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 // 消息已存在，说明已有取消任务在途，无需重复写
                 log.info("订单 {} 回库存消息已存在，跳过写入", id);
             }
+            // 同事务关闭在途支付单（CAS 0→3）；支付回调若先赢 CAS，此处返回 null，
+            // 而订单 CAS 也已失败返回，不会走到这里 —— 谁先 CAS 赢谁
+            final PayRecord closedPay = payService.closePayForOrder(id);
+            if (closedPay != null && closedPay.getTransactionId() != null) {
+                // 提交后 best-effort 关网关侧交易单；失败无碍：本地已关，迟到回调会被拒
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        mockPayGatewayClient.closeTxn(closedPay.getTransactionId());
+                    }
+                });
+            }
         }
         //事务提交成功后再发 MQ 邮件通知，避免回滚后用户仍收到通知
         final String addPerson = exists.getAddPerson();
@@ -593,7 +708,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
     /**
      * 通过 MQ 发送订单状态变更邮件通知；发送失败仅记录日志，不影响主流程。
-     * 支付(→1)不发信 —— 只有取消与完成才需要通知。
+     * 支付(→1)不发信 —— 只有发货、取消与完成才需要通知。
      */
     private void toSendMail(String addPerson, String orderNo, Integer orderStatus) {
         if (PLACED_ORDER_STATUS.equals(orderStatus)) {
@@ -604,6 +719,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         if (CANCEL_ORDER_STATUS.equals(orderStatus)) {
             subject = "订单取消通知";
             message = "您好，编号为【" + orderNo + "】的订单已经取消，可前往系统进行查看";
+        } else if (SHIPPED_ORDER_STATUS.equals(orderStatus)) {
+            subject = "订单发货通知";
+            message = "您好，编号为【" + orderNo + "】的订单已发货，可前往系统查看物流信息";
         }
         OrderMessage orderMessage = new OrderMessage(addPerson, subject, message);
         try {
@@ -674,6 +792,17 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         Integer status = exists.getOrderStatus();
         if (!CANCEL_ORDER_STATUS.equals(status) && !COMPLETE_ORDER_STATUS.equals(status)) {
             return ResponseDto.error("仅已取消或已完成的订单可以删除");
+        }
+        // 售后在途（待审核/退款中）的订单不可删：退款与库存回补都以 o_id 关联本单
+        com.example.scorder.entity.AfterSale inflight = afterSaleMapper.selectOne(
+                new LambdaQueryWrapper<com.example.scorder.entity.AfterSale>()
+                        .eq(com.example.scorder.entity.AfterSale::getOId, id)
+                        .in(com.example.scorder.entity.AfterSale::getStatus,
+                                com.example.scorder.entity.AfterSale.STATUS_PENDING,
+                                com.example.scorder.entity.AfterSale.STATUS_REFUNDING)
+                        .last("LIMIT 1"));
+        if (inflight != null) {
+            return ResponseDto.error("该订单存在处理中的售后申请，无法删除");
         }
         int rows = orderMapper.deleteById(id);
         return rows > 0 ? ResponseDto.success(null) : ResponseDto.error("删除订单失败");

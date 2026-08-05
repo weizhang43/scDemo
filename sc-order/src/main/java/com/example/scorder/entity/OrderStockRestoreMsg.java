@@ -18,6 +18,10 @@ public class OrderStockRestoreMsg {
     @TableField("o_id")
     private Integer oId;
 
+    /** 消息来源 0:取消订单（回库存后删订单明细） 1:售后退款（订单仍存续，明细保留） */
+    @TableField("source")
+    private Integer source;
+
     @TableField("status")
     private Integer status;
 

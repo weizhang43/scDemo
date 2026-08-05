@@ -41,6 +41,11 @@ spring:
           uri: lb://sc-product
           predicates:
             - Path=/product/**
+        # 模拟支付网关
+        - id: sc-pay
+          uri: lb://sc-pay
+          predicates:
+            - Path=/pay/**
       # 跨域配置
       default-filters:
         - DedupeResponseHeader=Vary Access-Control-Allow-Origin Access-Control-Allow-Credentials, RETAIN_UNIQUE

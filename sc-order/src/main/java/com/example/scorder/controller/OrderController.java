@@ -237,6 +237,17 @@ public class OrderController {
     }
 
     /**
+     * 商家发货：填写快递公司与单号，订单 1(已支付)→3(已发货)。
+     */
+    @OpLog(module = "订单管理", type = OpLog.OpType.UPDATE, description = "订单发货")
+    @PostMapping("/ship")
+    public ResponseDto<Order> ship(@RequestParam("id") Integer id,
+                                   @RequestParam("shippingCompany") String shippingCompany,
+                                   @RequestParam("trackingNo") String trackingNo) {
+        return orderService.ship(id, shippingCompany, trackingNo, OrderScopeResolver.current());
+    }
+
+    /**
      * 按主键删除订单（逻辑/物理删除由 Service 决定）。
      */
     @OpLog(module = "订单管理", type = OpLog.OpType.DELETE, description = "删除订单")

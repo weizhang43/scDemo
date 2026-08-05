@@ -1,0 +1,40 @@
+# Tomcat
+server:
+  port: 8005
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+# Spring
+spring:
+  application:
+    # 应用名称
+    name: sc-pay
+  profiles:
+    # 环境配置
+    active: test
+  cloud:
+    nacos:
+      discovery:
+        # 服务注册地址
+        server-addr: localhost:8848
+      config:
+        # 配置中心地址
+        server-addr: localhost:8848
+        # 配置文件格式
+        file-extension: yml
+        # 共享配置
+        shared-configs:
+          - data-id: application-${spring.profiles.active}.${spring.cloud.nacos.config.file-extension}
+            refresh: true
+
+# 模拟支付网关
+pay:
+  # 商户签名密钥，须与 sc-order 一致
+  secret: ${SC_PAY_SECRET:sc-pay-secret-dev}
+mock-pay:
+  # 支付结果确定后延迟多久发起异步回调（毫秒）
+  notify-delay-ms: 1000
+  # 是否故意重复发送回调（演示商户侧幂等）
+  notify-duplicate: false

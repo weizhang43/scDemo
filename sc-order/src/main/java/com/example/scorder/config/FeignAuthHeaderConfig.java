@@ -42,6 +42,12 @@ public class FeignAuthHeaderConfig {
             header(request, AuthConstant.HEADER_X_REAL_NAME, template);
             header(request, AuthConstant.HEADER_X_USER_TYPE, template);
             header(request, AuthConstant.HEADER_AUTHORIZATION, template);
+            // 有请求上下文但无用户头（如支付网关回调触发的链路）：同样回退内部令牌，
+            // 否则下游 InnerAuthFilter 会 401
+            String uId = request.getHeader(AuthConstant.HEADER_X_USER_ID);
+            if ((uId == null || uId.isEmpty()) && innerToken != null && !innerToken.isEmpty()) {
+                template.header(AuthConstant.HEADER_X_INNER_TOKEN, innerToken);
+            }
         };
     }
 

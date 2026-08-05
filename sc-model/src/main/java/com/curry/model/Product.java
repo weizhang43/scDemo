@@ -68,10 +68,24 @@ public class Product {
     @TableField("status")
     private Integer status;
 
-    /** 商品类型 1-食品饮品 2-电子产品 3-服装饰品 4-家用电器 5-汽车 6-厨房用品 7-其他 */
+    /**
+     * 商品类型 1-食品饮品 2-电子产品 3-服装饰品 4-家用电器 5-汽车 6-厨房用品 7-其他
+     * @deprecated 已由 categoryId（t_category 两级分类）取代，列保留仅为兼容回滚
+     */
+    @Deprecated
     @JsonProperty("pType")
     @TableField("p_type")
     private Integer pType;
+
+    /** 分类ID（t_category.id），可挂一级或二级分类 */
+    @JsonProperty("categoryId")
+    @TableField("category_id")
+    private Integer categoryId;
+
+    /** 分类名称。非持久化字段，联 t_category 现取。 */
+    @JsonProperty("categoryName")
+    @TableField(exist = false)
+    private String categoryName;
 
     /**
      * 生效中的折扣率（1-99，如 85 表示 8.5 折），无生效折扣时为 null。

@@ -16,6 +16,13 @@ public class PlaceOrderRequest {
     private String addPerson;
     private Integer addressId;
     private Integer orderStatus;
+    /** 选用的用户券ID（t_user_coupon.id），不用券传 null */
+    private Integer couponId;
+    /**
+     * 页面展示的券后应付总额，仅用于比对：服务端重算不一致（价格/券规则恰好变化）直接拒单。
+     * 未选券时可不传。
+     */
+    private BigDecimal expectedPayAmount;
     private List<Item> items;
 
     @Data

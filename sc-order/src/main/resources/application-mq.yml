@@ -3,7 +3,7 @@ spring:
     host: localhost
     port: 5672
     username: ${RABBITMQ_USERNAME:admin}
-    password: ${RABBITMQ_PASSWORD:}
+    password: ${RABBITMQ_PASSWORD:admin123}
     virtual-host: /
     # 连接池配置
     listener:

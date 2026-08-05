@@ -14,4 +14,16 @@ public interface OrderFeignService {
      */
     @PostMapping("/order/job/handleUnSubmitOrder")
     ResponseDto<Integer> handleUnSubmitOrder();
+
+    /**
+     * 触发发货超时自动确认收货任务，返回本次扫描到的订单数量。
+     */
+    @PostMapping("/order/job/autoConfirmReceive")
+    ResponseDto<Integer> autoConfirmReceive();
+
+    /**
+     * 触发售后退款重试任务，返回本次处理的工单数量。
+     */
+    @PostMapping("/order/job/retryAfterSaleRefund")
+    ResponseDto<Integer> retryAfterSaleRefund();
 }

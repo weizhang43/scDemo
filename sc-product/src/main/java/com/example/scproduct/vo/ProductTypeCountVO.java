@@ -1,24 +1,26 @@
 package com.example.scproduct.vo;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
-
 import java.io.Serializable;
 
 /**
- * 商品类型统计项：按 t_product.p_type 分组计数。
+ * 商品分类统计项：按一级分类分组计数（二级分类归并到其根分类）。
+ * categoryId/categoryName 为 NULL 表示商品未挂分类或分类已删除，前端显示「未分类」。
  */
 public class ProductTypeCountVO implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
-    /** getPType() 默认会被 Jackson 序列化成 "ptype"，与前端约定不符，故显式指定 */
-    @JsonProperty("pType")
-    private Integer pType;
+    private Integer categoryId;
+
+    private String categoryName;
 
     private Long cnt;
 
-    public Integer getPType() { return pType; }
-    public void setPType(Integer pType) { this.pType = pType; }
+    public Integer getCategoryId() { return categoryId; }
+    public void setCategoryId(Integer categoryId) { this.categoryId = categoryId; }
+
+    public String getCategoryName() { return categoryName; }
+    public void setCategoryName(String categoryName) { this.categoryName = categoryName; }
 
     public Long getCnt() { return cnt; }
     public void setCnt(Long cnt) { this.cnt = cnt; }

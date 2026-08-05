@@ -42,17 +42,21 @@ public interface OrderItemMapper extends BaseMapper<OrderItem> {
     List<Map<String, Object>> selectSalesRank(@Param("limit") int limit);
 
     /**
-     * 统计报表：销量按商品类型分组，联 t_product 现取 p_type（同库直接联表，不走 Feign）。
+     * 统计报表：销量按一级分类分组（同库直接联表，不走 Feign）。
+     * 二级分类通过 IF(parent_id=0, id, parent_id) 归并到根分类；
+     * category_id 为 NULL 或指向已删除分类的商品归入 categoryId=NULL 组（前端显示「未分类」）。
      * merchantId 非 null 时只统计该商家商品与公共商品（与商家可见范围一致）。
      */
     @Select({"<script>",
-            "SELECT p.p_type AS pType, SUM(i.quantity) AS salesCount",
+            "SELECT root.id AS categoryId, root.name AS categoryName, SUM(i.quantity) AS salesCount",
             "FROM t_order_item i",
             "JOIN t_order o ON o.o_id = i.o_id",
             "JOIN t_product p ON p.p_id = i.p_id",
+            "LEFT JOIN t_category c ON c.id = p.category_id",
+            "LEFT JOIN t_category root ON root.id = IF(c.parent_id = 0, c.id, c.parent_id)",
             "WHERE o.order_status IN (1, 2)",
             "<if test='merchantId != null'> AND (p.merchant_id = #{merchantId} OR p.merchant_id IS NULL) </if>",
-            "GROUP BY p.p_type ORDER BY p.p_type",
+            "GROUP BY root.id, root.name ORDER BY root.id",
             "</script>"})
     List<TypeSalesVO> selectTypeSales(@Param("merchantId") Integer merchantId);
 

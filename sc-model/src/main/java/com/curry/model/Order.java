@@ -39,6 +39,30 @@ public class Order {
     @TableField("order_status")
     private Integer orderStatus;
 
+    @TableField("shipping_company")
+    private String shippingCompany;
+
+    @TableField("tracking_no")
+    private String trackingNo;
+
+    @TableField("ship_time")
+    private Date shipTime;
+
+    @TableField("receive_time")
+    private Date receiveTime;
+
+    /** 使用的用户券ID(t_user_coupon.id)，未用券为 null */
+    @TableField("coupon_id")
+    private Integer couponId;
+
+    /** 优惠券抵扣金额；orderAmount 为抵扣后的实付金额 */
+    @TableField("coupon_amount")
+    private BigDecimal couponAmount;
+
+    /** 售后工单状态（0待审核/1退款中/2已退款/3已拒绝/4已取消），无售后为 null。联表现取，不落库 */
+    @TableField(exist = false)
+    private Integer afterSaleStatus;
+
     @Version
     @TableField("version")
     private Integer version;

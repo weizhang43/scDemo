@@ -53,6 +53,7 @@ public interface ProductService extends IService<Product> {
      * 结果始终带成交数与评价数。
      *
      * @param status 1-在售 0-已下架，传 null 不限
+     * @param categoryId 分类过滤；一级分类自动展开为「自身 + 子分类」，传 null 不限
      * @param sortBy sales-成交数 reviews-评价数 likes-点赞数，其余（含 null）按 id 倒序
      */
     ResponseDto<Product> pageQuery(String pName,
@@ -62,6 +63,7 @@ public interface ProductService extends IService<Product> {
                                    String origin,
                                    Integer isExpired,
                                    Integer status,
+                                   Integer categoryId,
                                    String sortBy,
                                    int pageNo,
                                    int pageSize,

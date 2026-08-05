@@ -11,6 +11,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.curry.model.Product;
 import com.example.scproduct.auth.AudienceScope;
 import com.example.scproduct.es.ProductDescEsService;
+import com.example.scproduct.mapper.CategoryMapper;
 import com.example.scproduct.mapper.ProductLikeMapper;
 import com.example.scproduct.mapper.ProductMapper;
 import com.example.scproduct.service.ProductService;
@@ -49,6 +50,9 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
 
     @Autowired
     private ProductLikeMapper productLikeMapper;
+
+    @Autowired
+    private CategoryMapper categoryMapper;
 
     @Autowired
     private RedissonClient redissonClient;
@@ -132,6 +136,10 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
             promotionService.fillEffectivePrice(Collections.singletonList(product));
             // 详情页走的是 MP 的单表查询，拿到的 like_count 是快照列，这里用明细表的精确值覆盖
             product.setLikeCount((int) productLikeMapper.countByPId(id));
+            if (product.getCategoryId() != null) {
+                com.example.scproduct.entity.Category category = categoryMapper.selectById(product.getCategoryId());
+                product.setCategoryName(category == null ? null : category.getName());
+            }
         }
         return product;
     }
@@ -158,6 +166,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
                                          String origin,
                                          Integer isExpired,
                                          Integer status,
+                                         Integer categoryId,
                                          String sortBy,
                                          int pageNo,
                                          int pageSize,
@@ -167,6 +176,12 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
                 productionDateEnd, origin, isExpired, scope);
         // status 只加在列表查询上，不进 buildListWrapper：导出沿用旧的「不限上下架」语义
         queryWrapper.eq(status != null, Product::getStatus, status);
+        if (categoryId != null) {
+            // 一级分类展开为「自身 + 子分类」：挂在二级分类上的商品也要被一级分类筛中
+            List<Integer> ids = new ArrayList<>(categoryMapper.selectChildIds(categoryId));
+            ids.add(categoryId);
+            queryWrapper.in(Product::getCategoryId, ids);
+        }
         IPage<Product> result = productMapper.selectPageWithStats(page, queryWrapper, sortBy);
         promotionService.fillEffectivePrice(result.getRecords());
         return ResponseDto.success(result);

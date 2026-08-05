@@ -38,3 +38,20 @@ ALTER TABLE `t_order`
 UPDATE `t_order` o JOIN `t_user` u ON o.add_person = u.u_name
   SET o.u_id = u.u_id WHERE o.u_id IS NULL;
 ALTER TABLE `t_order` ADD INDEX `idx_uid_create_time` (`u_id`, `create_time`);
+
+-- 简化物流发货：订单状态新增 3(已发货)，流转 1→3(商家发货)→2(顾客确认收货/超时自动确认)。
+-- 一单一发货且不对接真实物流轨迹，发货信息直接放订单表，不单独建物流表。
+ALTER TABLE `t_order`
+  ADD COLUMN `shipping_company` VARCHAR(64) DEFAULT NULL COMMENT '快递公司',
+  ADD COLUMN `tracking_no` VARCHAR(64) DEFAULT NULL COMMENT '快递单号',
+  ADD COLUMN `ship_time` DATETIME DEFAULT NULL COMMENT '发货时间',
+  ADD COLUMN `receive_time` DATETIME DEFAULT NULL COMMENT '确认收货时间';
+ALTER TABLE `t_order`
+  MODIFY COLUMN `order_status` TINYINT DEFAULT 1 COMMENT '订单状态(-1:订单取消 0:待付款 1:已支付待发货 2:已完成 3:已发货)';
+
+-- 优惠券：整单最多一张券，下单锁定、支付成功核销、取消/售后退款返还。
+-- order_amount 存的是券抵扣后的实付金额（支付、退款均以它为准），
+-- 商品原价合计 = order_amount + coupon_amount，可推导不冗余。
+ALTER TABLE `t_order`
+  ADD COLUMN `coupon_id` INT DEFAULT NULL COMMENT '使用的用户券ID(t_user_coupon.id)',
+  ADD COLUMN `coupon_amount` DECIMAL(10,2) DEFAULT NULL COMMENT '优惠券抵扣金额';

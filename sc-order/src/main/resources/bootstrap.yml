@@ -69,3 +69,12 @@ inner:
   auth:
     token: ${SC_INNER_TOKEN:sc-inner-token-dev}
 
+# 模拟支付网关（sc-pay）：不走 Feign，RestTemplate 穿网关模拟外部往返
+pay:
+  # 商户签名密钥，须与 sc-pay 配置一致
+  secret: ${SC_PAY_SECRET:sc-pay-secret-dev}
+  gateway:
+    base-url: http://localhost:8000/pay
+  # 网关异步回调地址（走 sc-gateway 白名单）
+  notify-url: http://localhost:8000/order/pay/notify
+

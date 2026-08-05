@@ -72,6 +72,11 @@ public interface OrderService extends IService<Order> {
     ResponseDto<Order> updateStatus(Integer id, Integer orderStatus, OrderScope scope);
 
     /**
+     * 商家发货：1(已支付)→3(已发货)，同时写入快递公司/单号/发货时间。顾客无权调用。
+     */
+    ResponseDto<Order> ship(Integer id, String shippingCompany, String trackingNo, OrderScope scope);
+
+    /**
      * 超时取消：仅当订单仍处于待付款(0)时才流转到取消。
      * 供 MQ 延时消息与定时任务使用 —— 顾客可能已经支付(0→1)，那条延时消息不能再把订单取消掉。
      */
