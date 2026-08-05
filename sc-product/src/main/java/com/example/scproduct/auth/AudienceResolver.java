@@ -31,13 +31,17 @@ public final class AudienceResolver {
 
     /**
      * 按 X-User-Id / X-User-Type 判定范围。
-     * 无 X-User-Id 说明是携带 X-Inner-Token 的服务间调用（已由 InnerAuthFilter 校验），不过滤。
+     * 无 X-User-Id 时分两种：携带 X-Inner-Token 的服务间调用（已由 InnerAuthFilter 校验）不过滤；
+     * 否则是网关白名单放行的游客请求，按最小权限当顾客处理。
      * uType 缺失只可能是绕过新版网关的调用，按最小权限当顾客处理。
      */
     public static AudienceScope from(HttpServletRequest request) {
         Integer uId = parseInt(request.getHeader(AuthConstant.HEADER_X_USER_ID));
         if (uId == null) {
-            return AudienceScope.unrestricted();
+            String innerToken = request.getHeader(AuthConstant.HEADER_X_INNER_TOKEN);
+            return (innerToken == null || innerToken.trim().isEmpty())
+                    ? AudienceScope.customer()
+                    : AudienceScope.unrestricted();
         }
         Integer uType = parseInt(request.getHeader(AuthConstant.HEADER_X_USER_TYPE));
         if (uType == null || uType == AuthConstant.U_TYPE_CUSTOMER) {

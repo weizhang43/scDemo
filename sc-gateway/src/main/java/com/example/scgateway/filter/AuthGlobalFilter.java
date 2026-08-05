@@ -64,7 +64,11 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
             // 模拟支付网关：收银台前端裸访问 + sc-order 商户调用（自带 HMAC 验签）
             "/pay/**",
             // 网关异步回调入口（sc-pay → sc-order），HMAC 验签 + nonce 防重放
-            "/order/pay/notify"
+            "/order/pay/notify",
+            // 游客可见的只读接口：登录页公告 + 未登录浏览商品（均只有 GET 映射）
+            "/user/notice/list",
+            "/product/pageQuery",
+            "/product/category/tree"
     };
 
     /**

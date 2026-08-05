@@ -44,7 +44,10 @@ public class InnerAuthFilter extends OncePerRequestFilter {
         boolean isActuator = path.contains("/actuator");
         boolean isImageGet = "GET".equalsIgnoreCase(method)
                 && path.contains("/product/image/");
-        if (isActuator || isImageGet) {
+        // 游客浏览商品：与网关白名单保持一致的只读路径
+        boolean isGuestRead = "GET".equalsIgnoreCase(method)
+                && (path.contains("/product/pageQuery") || path.contains("/product/category/tree"));
+        if (isActuator || isImageGet || isGuestRead) {
             chain.doFilter(request, response);
             return;
         }
