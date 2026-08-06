@@ -301,6 +301,33 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     }
 
     @Override
+    public ResponseDto<User> statisticsOverview() {
+        long totalUsers = 0L, customerCount = 0L, merchantCount = 0L, adminCount = 0L;
+        for (Map<String, Object> row : baseMapper.countGroupByType()) {
+            Object type = row.get("uType");
+            long cnt = row.get("cnt") == null ? 0L : ((Number) row.get("cnt")).longValue();
+            totalUsers += cnt;
+            if (type == null) {
+                continue;
+            }
+            switch (((Number) type).intValue()) {
+                case 1: merchantCount = cnt; break;
+                case 2: customerCount = cnt; break;
+                case 3: adminCount = cnt; break;
+                default: break;
+            }
+        }
+        Long todayNew = baseMapper.countTodayNew();
+        Map<String, Object> data = new HashMap<>();
+        data.put("totalUsers", totalUsers);
+        data.put("customerCount", customerCount);
+        data.put("merchantCount", merchantCount);
+        data.put("adminCount", adminCount);
+        data.put("todayNewUsers", todayNew == null ? 0L : todayNew);
+        return ResponseDto.success(data);
+    }
+
+    @Override
     public void export(String key, Integer gender, String birthdayStart, String birthdayEnd, HttpServletResponse response) throws Exception {
         LambdaQueryWrapper<User> queryWrapper = new LambdaQueryWrapper<User>()
                 .select(User::getUId, User::getUName, User::getRealName,

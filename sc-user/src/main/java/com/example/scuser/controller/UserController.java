@@ -96,6 +96,16 @@ public class UserController {
         return userService.resetPassword(phone, code, newPassword);
     }
 
+    /** 管理员驾驶舱：用户总量、按类型构成、今日新增注册数 */
+    @GetMapping("/statistics/overview")
+    public ResponseDto<User> statisticsOverview(
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer uType) {
+        if (uType == null || uType != AuthConstant.U_TYPE_ADMIN) {
+            return ResponseDto.error("无权限");
+        }
+        return userService.statisticsOverview();
+    }
+
     @GetMapping("/list")
     public ResponseDto<User> list(@RequestParam(value = "key", required = false, defaultValue = "") String key,
                                 @RequestParam(value = "gender", required = false) Integer gender,

@@ -29,17 +29,20 @@ public interface OrderItemMapper extends BaseMapper<OrderItem> {
     /**
      * 商品销量排行：按商品聚合购买数量，仅统计已下单(1)/已完成(2)的订单。
      * 只按 p_id 分组——p_name 是每单快照，商品改名后同一商品会被拆成多行，故用 MAX 取一个。
+     * merchantId 非 null 时只统计该商家商品与公共商品（商家工作台热销榜用）。
      */
-    @Select({
+    @Select({"<script>",
             "SELECT i.p_id AS pId, MAX(i.p_name) AS pName, SUM(i.quantity) AS salesCount",
             "FROM t_order_item i",
             "JOIN t_order o ON o.o_id = i.o_id",
+            "<if test='merchantId != null'> JOIN t_product p ON p.p_id = i.p_id </if>",
             "WHERE o.order_status IN (1, 2)",
+            "<if test='merchantId != null'> AND (p.merchant_id = #{merchantId} OR p.merchant_id IS NULL) </if>",
             "GROUP BY i.p_id",
             "ORDER BY salesCount DESC",
-            "LIMIT #{limit}"
-    })
-    List<Map<String, Object>> selectSalesRank(@Param("limit") int limit);
+            "LIMIT #{limit}",
+            "</script>"})
+    List<Map<String, Object>> selectSalesRank(@Param("limit") int limit, @Param("merchantId") Integer merchantId);
 
     /**
      * 统计报表：销量按一级分类分组（同库直接联表，不走 Feign）。
@@ -74,6 +77,33 @@ public interface OrderItemMapper extends BaseMapper<OrderItem> {
             "GROUP BY month ORDER BY month",
             "</script>"})
     List<MonthlySalesVO> selectMonthlySales(@Param("merchantId") Integer merchantId);
+
+    /**
+     * 商家口径今日成交：订单可能混含多商家商品，按明细归属统计。
+     * 金额为明细原价快照合计（不含券抵扣），口径同 selectTypeSales。
+     */
+    @Select("SELECT IFNULL(SUM(i.price * i.quantity), 0) AS todayGmv, COUNT(DISTINCT o.o_id) AS todayOrderCount " +
+            "FROM t_order_item i " +
+            "JOIN t_order o ON o.o_id = i.o_id " +
+            "JOIN t_product p ON p.p_id = i.p_id " +
+            "WHERE o.order_status IN (1, 2, 3) AND o.create_time >= CURDATE() " +
+            "AND (p.merchant_id = #{merchantId} OR p.merchant_id IS NULL)")
+    Map<String, Object> selectTodayOverviewByMerchant(@Param("merchantId") Integer merchantId);
+
+    /**
+     * 商家口径近 N 天逐日成交（明细原价合计+去重单量）。无成交的日期不返回，由 Service 补 0。
+     */
+    @Select("SELECT DATE_FORMAT(o.create_time, '%Y-%m-%d') AS date, " +
+            "IFNULL(SUM(i.price * i.quantity), 0) AS gmv, COUNT(DISTINCT o.o_id) AS orderCount " +
+            "FROM t_order_item i " +
+            "JOIN t_order o ON o.o_id = i.o_id " +
+            "JOIN t_product p ON p.p_id = i.p_id " +
+            "WHERE o.order_status IN (1, 2, 3) " +
+            "AND o.create_time >= DATE_SUB(CURDATE(), INTERVAL #{days} - 1 DAY) " +
+            "AND (p.merchant_id = #{merchantId} OR p.merchant_id IS NULL) " +
+            "GROUP BY date ORDER BY date")
+    List<Map<String, Object>> selectDailySalesByMerchant(@Param("merchantId") Integer merchantId,
+                                                         @Param("days") int days);
 }
 
 

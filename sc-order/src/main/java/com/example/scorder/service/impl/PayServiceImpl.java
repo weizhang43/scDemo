@@ -86,7 +86,8 @@ public class PayServiceImpl implements PayService {
         RLock lock = redissonClient.getLock("lock:pay:create:" + oId);
         boolean locked;
         try {
-            locked = lock.tryLock(3, 10, TimeUnit.SECONDS);
+            // 不指定 leaseTime，走 watchdog 自动续期：锁内有网关外呼，固定租约会在慢调用时提前失效
+            locked = lock.tryLock(3, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return ResponseDto.error("系统繁忙，请稍后重试");
@@ -122,7 +123,9 @@ public class PayServiceImpl implements PayService {
             backfillTransactionId(record, order);
             return ResponseDto.success(toCreateVO(record));
         } finally {
-            lock.unlock();
+            if (lock.isHeldByCurrentThread()) {
+                lock.unlock();
+            }
         }
     }
 

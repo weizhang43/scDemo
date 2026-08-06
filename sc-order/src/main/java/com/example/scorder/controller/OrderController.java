@@ -57,11 +57,30 @@ public class OrderController {
         return orderService.listMyTimeoutWarning(uName);
     }
 
-    /** 顾客首页：商品销量榜 */
+    /** 顾客首页/商家工作台：商品销量榜。商家身份只统计自己的商品与公共商品 */
     @GetMapping("/rank/sales")
     public ResponseDto<com.example.scorder.vo.ProductSalesRankVO> salesRank(
-            @RequestParam(value = "limit", defaultValue = "10") int limit) {
-        return orderService.listSalesRank(Math.min(Math.max(limit, 1), 50));
+            @RequestParam(value = "limit", defaultValue = "10") int limit,
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_ID, required = false) Integer uId,
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer uType) {
+        return orderService.listSalesRank(Math.min(Math.max(limit, 1), 50), merchantIdOf(uId, uType));
+    }
+
+    /** 首页工作台概览：今日成交额/单量、待发货、待付款、待处理售后。商家按明细口径，管理员按平台实付口径 */
+    @GetMapping("/statistics/overview")
+    public ResponseDto<com.example.scorder.vo.DashboardOverviewVO> dashboardOverview(
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_ID, required = false) Integer uId,
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer uType) {
+        return orderService.dashboardOverview(merchantIdOf(uId, uType));
+    }
+
+    /** 首页工作台：近 N 天（默认 7，上限 30）逐日成交趋势，无成交日期补 0 */
+    @GetMapping("/statistics/dailySales")
+    public ResponseDto<com.example.scorder.vo.DailySalesVO> dailySales(
+            @RequestParam(value = "days", defaultValue = "7") int days,
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_ID, required = false) Integer uId,
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer uType) {
+        return orderService.listDailySales(merchantIdOf(uId, uType), Math.min(Math.max(days, 1), 30));
     }
 
     /** 统计报表：销量按商品类型分组。商家只统计自己的商品与公共商品，管理员/内部调用查全量 */

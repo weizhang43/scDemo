@@ -50,6 +50,11 @@ public interface UserService extends IService<User> {
     ResponseDto<User> updateProfile(User user);
 
     /**
+     * 管理员驾驶舱：用户总量、按类型构成、今日新增注册数。
+     */
+    ResponseDto<User> statisticsOverview();
+
+    /**
      * 按查询条件导出用户列表为 Excel（EasyExcel）
      */
     void export(String key, Integer gender, String birthdayStart, String birthdayEnd, HttpServletResponse response) throws Exception;

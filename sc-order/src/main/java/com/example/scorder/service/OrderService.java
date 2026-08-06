@@ -31,8 +31,20 @@ public interface OrderService extends IService<Order> {
 
     /**
      * 顾客首页：商品销量榜，销量由 t_order_item 聚合，价格与图片经 Feign 从 sc-product 补齐。
+     * merchantId 非 null 时只统计该商家商品与公共商品（商家工作台热销榜）。
      */
-    ResponseDto<ProductSalesRankVO> listSalesRank(int limit);
+    ResponseDto<ProductSalesRankVO> listSalesRank(int limit, Integer merchantId);
+
+    /**
+     * 首页工作台概览：今日成交额/单量、待发货、待付款、待处理售后。
+     * merchantId 非 null 时按商家明细口径统计（原价快照合计），null 为平台实付口径。
+     */
+    ResponseDto<com.example.scorder.vo.DashboardOverviewVO> dashboardOverview(Integer merchantId);
+
+    /**
+     * 近 N 个自然日（含今日）逐日成交趋势，无成交的日期补 0。
+     */
+    ResponseDto<com.example.scorder.vo.DailySalesVO> listDailySales(Integer merchantId, int days);
 
     /**
      * 统计报表：销量按商品类型分组（仅统计已下单/已完成订单）。

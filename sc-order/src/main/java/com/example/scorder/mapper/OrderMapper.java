@@ -122,4 +122,21 @@ public interface OrderMapper extends BaseMapper<Order> {
                                                  @Param("createTimeStart") java.util.Date createTimeStart,
                                                  @Param("createTimeEnd") java.util.Date createTimeEnd,
                                                  @Param("uId") Integer uId);
+
+    /**
+     * 平台口径今日成交：实付金额（order_amount 为券后价）与订单数，仅统计已支付(1)/已完成(2)/已发货(3)。
+     */
+    @Select("SELECT IFNULL(SUM(order_amount), 0) AS todayGmv, COUNT(*) AS todayOrderCount " +
+            "FROM t_order WHERE order_status IN (1, 2, 3) AND create_time >= CURDATE()")
+    Map<String, Object> selectTodayOverviewAll();
+
+    /**
+     * 平台口径近 N 天逐日成交（实付金额+单量）。无成交的日期不返回，由 Service 补 0。
+     */
+    @Select("SELECT DATE_FORMAT(create_time, '%Y-%m-%d') AS date, " +
+            "IFNULL(SUM(order_amount), 0) AS gmv, COUNT(*) AS orderCount " +
+            "FROM t_order WHERE order_status IN (1, 2, 3) " +
+            "AND create_time >= DATE_SUB(CURDATE(), INTERVAL #{days} - 1 DAY) " +
+            "GROUP BY date ORDER BY date")
+    List<Map<String, Object>> selectDailySalesAll(@Param("days") int days);
 }

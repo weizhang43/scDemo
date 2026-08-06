@@ -156,9 +156,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     }
 
     @Override
-    public ResponseDto<ProductSalesRankVO> listSalesRank(int limit) {
+    public ResponseDto<ProductSalesRankVO> listSalesRank(int limit, Integer merchantId) {
         List<ProductSalesRankVO> rank = new ArrayList<>();
-        for (Map<String, Object> row : orderItemMapper.selectSalesRank(limit)) {
+        for (Map<String, Object> row : orderItemMapper.selectSalesRank(limit, merchantId)) {
             ProductSalesRankVO vo = new ProductSalesRankVO();
             vo.setPId(row.get("pId") == null ? null : ((Number) row.get("pId")).intValue());
             vo.setPName((String) row.get("pName"));
@@ -218,6 +218,50 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         for (int i = 2; i >= 0; i--) {
             String month = now.minusMonths(i).toString();
             result.add(new MonthlySalesVO(month, salesByMonth.getOrDefault(month, 0L)));
+        }
+        return ResponseDto.success(result);
+    }
+
+    @Override
+    public ResponseDto<com.example.scorder.vo.DashboardOverviewVO> dashboardOverview(Integer merchantId) {
+        com.example.scorder.vo.DashboardOverviewVO vo = new com.example.scorder.vo.DashboardOverviewVO();
+        Map<String, Object> today = merchantId == null
+                ? orderMapper.selectTodayOverviewAll()
+                : orderItemMapper.selectTodayOverviewByMerchant(merchantId);
+        vo.setTodayGmv(today == null || today.get("todayGmv") == null
+                ? BigDecimal.ZERO : new BigDecimal(today.get("todayGmv").toString()));
+        vo.setTodayOrderCount(today == null || today.get("todayOrderCount") == null
+                ? 0L : ((Number) today.get("todayOrderCount")).longValue());
+
+        // 待发货/待付款：复用状态分组统计（商家/管理员 scope 均为全量，与订单列表口径一致）
+        Map<String, Long> statusCount = countByStatus(null, null, null, null, OrderScope.unrestricted());
+        vo.setPendingShipCount(statusCount.getOrDefault(String.valueOf(PLACED_ORDER_STATUS), 0L));
+        vo.setUnpaidCount(statusCount.getOrDefault(String.valueOf(UN_COMMIT_ORDER_STATUS), 0L));
+
+        vo.setPendingAfterSaleCount(afterSaleMapper.selectCount(
+                new LambdaQueryWrapper<com.example.scorder.entity.AfterSale>()
+                        .eq(com.example.scorder.entity.AfterSale::getStatus, 0)).longValue());
+        return ResponseDto.success(vo);
+    }
+
+    @Override
+    public ResponseDto<com.example.scorder.vo.DailySalesVO> listDailySales(Integer merchantId, int days) {
+        List<Map<String, Object>> rows = merchantId == null
+                ? orderMapper.selectDailySalesAll(days)
+                : orderItemMapper.selectDailySalesByMerchant(merchantId, days);
+        Map<String, com.example.scorder.vo.DailySalesVO> byDate = new HashMap<>();
+        for (Map<String, Object> row : rows) {
+            String date = String.valueOf(row.get("date"));
+            BigDecimal gmv = row.get("gmv") == null ? BigDecimal.ZERO : new BigDecimal(row.get("gmv").toString());
+            Long cnt = row.get("orderCount") == null ? 0L : ((Number) row.get("orderCount")).longValue();
+            byDate.put(date, new com.example.scorder.vo.DailySalesVO(date, gmv, cnt));
+        }
+        List<com.example.scorder.vo.DailySalesVO> result = new ArrayList<>();
+        java.time.LocalDate today = java.time.LocalDate.now();
+        for (int i = days - 1; i >= 0; i--) {
+            String date = today.minusDays(i).toString();
+            result.add(byDate.getOrDefault(date,
+                    new com.example.scorder.vo.DailySalesVO(date, BigDecimal.ZERO, 0L)));
         }
         return ResponseDto.success(result);
     }
