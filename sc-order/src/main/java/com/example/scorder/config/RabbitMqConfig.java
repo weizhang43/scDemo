@@ -3,15 +3,11 @@ package com.example.scorder.config;
 import org.springframework.amqp.core.*;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.amqp.support.converter.MessageConverter;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
 public class RabbitMqConfig {
-
-    @Value("${order-timeout-minute:30}")
-    private Integer orderTimeOutMinute;
 
     /**
      * JSON 消息转换器，替换默认 SimpleMessageConverter，支持发送/接收任意 POJO（如 Order）。
@@ -23,7 +19,12 @@ public class RabbitMqConfig {
     }
 
     // ========== 队列定义 ==========
-    public static final String QUEUE_ORDER = "queue.order";
+    /**
+     * 订单延时队列。超时时长由生产者按消息级 TTL（expiration）设置，Nacos 热改即对新消息生效。
+     * 旧队列 queue.order 带固化的 x-message-ttl 参数（RabbitMQ 不允许改参重声明），故改名切换；
+     * 旧队列中的在途消息仍会按旧 TTL 死信到 dlx_queue 正常取消，排空后可在控制台手动删除。
+     */
+    public static final String QUEUE_ORDER = "queue.order.delay";
     public static final String QUEUE_EMAIL = "queue.email";
 
     // ========== 交换机定义 ==========
@@ -72,13 +73,12 @@ public class RabbitMqConfig {
     }
 
     /**
-     * 订单队列
+     * 订单延时队列：不设 x-message-ttl，超时由消息级 expiration 决定
      * @return
      */
     @Bean
     public Queue orderQueue(){
         return QueueBuilder.durable(QUEUE_ORDER)
-                .withArgument("x-message-ttl", orderTimeOutMinute * 60 * 1000) // 设置超时时间
                 .withArgument("x-max-length",10000)
                 .withArgument("x-dead-letter-exchange", DLX_EXCHANGE)
                 .withArgument("x-dead-letter-routing-key", DLX_ROUTING_KEY)

@@ -37,7 +37,6 @@ import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -115,8 +114,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     public static final Integer SHIPPED_ORDER_STATUS = 3;
 
     /** 订单超时时长（分钟）：状态为0的订单以 createTime + 该时长作为倒计时到期点 */
-    @Value("${order-timeout-minute:30}")
-    private Integer orderTimeOutMinute;
+    @Autowired
+    private com.example.scorder.config.OrderTimeoutProperties orderTimeoutProperties;
 
     @Override
     public ResponseDto<OrderTimeoutVO> listTimeoutWarning() {
@@ -149,7 +148,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             vo.setOrderStatus(o.getOrderStatus());
             vo.setCreateTime(o.getCreateTime());
             if (o.getCreateTime() != null) {
-                vo.setExpireTime(new Date(o.getCreateTime().getTime() + orderTimeOutMinute * 60L * 1000L));
+                vo.setExpireTime(new Date(o.getCreateTime().getTime() + orderTimeoutProperties.getTimeoutMillis()));
             }
             return vo;
         }).collect(Collectors.toList());
@@ -516,10 +515,12 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             orderItemMapper.insertBatch(itemRecords);
         }
         if(UN_COMMIT_ORDER_STATUS.compareTo(request.getOrderStatus()) == 0){
-            //未提交订单，三分钟不提交自动超时
-            //redisTemplate.opsForValue().set("orderExpired:"+order.getOId(),"1",30*60,TimeUnit.SECONDS);
-            //todo 使用消息队列实现订单超时
-            rabbitTemplate.convertAndSend("",RabbitMqConfig.QUEUE_ORDER,order.getOId());
+            // 超时用消息级 TTL：取下单时刻的 Nacos 配置值，到期死信到 dlx_queue 触发取消
+            final String ttl = String.valueOf(orderTimeoutProperties.getTimeoutMillis());
+            rabbitTemplate.convertAndSend("", RabbitMqConfig.QUEUE_ORDER, order.getOId(), message -> {
+                message.getMessageProperties().setExpiration(ttl);
+                return message;
+            });
         }
 
 

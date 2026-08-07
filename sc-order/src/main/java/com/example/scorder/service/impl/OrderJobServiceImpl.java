@@ -3,13 +3,13 @@ package com.example.scorder.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.curry.model.Order;
 import com.example.scorder.auth.OrderScope;
+import com.example.scorder.config.OrderTimeoutProperties;
 import com.example.scorder.service.OrderJobService;
 import com.example.scorder.service.OrderService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
 
@@ -18,7 +18,6 @@ import java.util.Date;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
-import static com.example.scorder.listener.RedisExpireListener.EXPIRED_KEY_PREFIX;
 import static com.example.scorder.service.impl.OrderServiceImpl.COMPLETE_ORDER_STATUS;
 import static com.example.scorder.service.impl.OrderServiceImpl.SHIPPED_ORDER_STATUS;
 import static com.example.scorder.service.impl.OrderServiceImpl.UN_COMMIT_ORDER_STATUS;
@@ -34,31 +33,26 @@ public class OrderJobServiceImpl implements OrderJobService {
     private OrderService orderService;
 
     @Autowired
-    private RedisTemplate redisTemplate;
+    private OrderTimeoutProperties orderTimeoutProperties;
 
     @Autowired
     @Qualifier("changeStatusExecutor")
     private ThreadPoolTaskExecutor executor;
 
+    /**
+     * 兜底扫描：MQ 延时取消漏掉的单（消息丢失、死信消费失败等）按 createTime 超时补取消。
+     * 用当前 Nacos 配置值判断；cancelUnSubmitted 内部复查状态 + CAS，与 MQ 链路并发取消也幂等。
+     */
     @Override
     public int handleUnSubmitOrder() {
+        Date deadline = new Date(System.currentTimeMillis() - orderTimeoutProperties.getTimeoutMillis());
         List<Order> orderList = orderService.list(new LambdaQueryWrapper<Order>()
-                .eq(Order::getOrderStatus, UN_COMMIT_ORDER_STATUS));
+                .eq(Order::getOrderStatus, UN_COMMIT_ORDER_STATUS)
+                .le(Order::getCreateTime, deadline));
         for (Order order : orderList) {
-            CompletableFuture.runAsync(() -> dealUnSubmitOrder(order), executor);
+            CompletableFuture.runAsync(() -> orderService.cancelUnSubmitted(order.getOId()), executor);
         }
         return orderList.size();
-    }
-
-    /**
-     * Redis 超时 key 已失效说明订单超时未提交，取消订单。
-     * 查询到执行之间仍有支付窗口，交给 cancelUnSubmitted 再确认一次状态。
-     */
-    private void dealUnSubmitOrder(Order order) {
-        String key = EXPIRED_KEY_PREFIX + order.getOId();
-        if (!redisTemplate.hasKey(key)) {
-            orderService.cancelUnSubmitted(order.getOId());
-        }
     }
 
     /** 发货后超过该天数未确认收货则自动确认 */

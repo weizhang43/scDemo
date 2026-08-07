@@ -1,0 +1,40 @@
+spring:
+  cloud:
+    gateway:
+      discovery:
+        locator:
+          lowerCaseServiceId: true
+          enabled: true
+      routes:
+        # 订单服务
+        - id: sc-order
+          uri: lb://sc-order
+          metadata:
+            response-timeout: 15000
+            connect-timeout: 5000
+          predicates:
+            - Path=/order/**
+          filters:
+            - RewritePath=/order(?<segment>/?.*), /sc-order/order${segment}
+        # 用户服务
+        - id: sc-user
+          uri: lb://sc-user
+          predicates:
+            - Path=/user/**
+          filters:
+            - RewritePath=/user(?<segment>/?.*), /sc-user/user${segment}
+        # 商品服务
+        - id: sc-product
+          uri: lb://sc-product
+          predicates:
+            - Path=/product/**
+          filters:
+            - RewritePath=/product(?<segment>/?.*), /sc-product/product${segment}
+        # 模拟支付网关（sc-pay 未设 context-path，无需 RewritePath）
+        - id: sc-pay
+          uri: lb://sc-pay
+          metadata:
+            response-timeout: 15000
+            connect-timeout: 5000
+          predicates:
+            - Path=/pay/**
