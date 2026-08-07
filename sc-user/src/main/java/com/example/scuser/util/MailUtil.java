@@ -10,9 +10,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Component;
 import response.ResponseDto;
 
+import javax.mail.MessagingException;
+import javax.mail.internet.MimeMessage;
 import java.util.List;
 
 @Component
@@ -40,6 +43,19 @@ public class MailUtil {
         mailMessage.setSubject(subject);
         mailMessage.setText(text);
         javaMailSender.send(mailMessage);
+    }
+
+    /**
+     * 发送 HTML 正文邮件（富文本内容场景，如工作日报/周报）。
+     */
+    public void sendHtmlTo(String to, String subject, String html) throws MessagingException {
+        MimeMessage message = javaMailSender.createMimeMessage();
+        MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+        helper.setFrom(sendFrom);
+        helper.setTo(to);
+        helper.setSubject(subject);
+        helper.setText(html, true);
+        javaMailSender.send(message);
     }
 
     public ResponseDto sendMail(OrderMessage orderMessage) {

@@ -15,6 +15,19 @@ scdemo:
 user:
   image:
     dir: D:/code/project/notice-images
+# 工作日报/周报模板：从本地 git 仓库统计提交、从 GitLab 统计本周合并 MR
+work-report:
+  git:
+    author: zhangwei@cn.chervongroup.com
+    repos:
+      - name: oms na
+        path: D:/code/qfkj/oms-java-project
+      - name: oms dtc
+        path: D:/code/qfkj/oms-d2c-na-backend
+  gitlab:
+    base-url: https://gitlab.chervon.com.cn
+    username: zhangwei
+    password: Curry0812
 # Spring
 spring:
   # 图片上传大小限制（图片文字识别）

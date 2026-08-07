@@ -67,6 +67,8 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
             "/order/pay/notify",
             // 游客可见的只读接口：登录页公告 + 未登录浏览商品（均只有 GET 映射）
             "/user/notice/list",
+            // 个人工作页（日报/周报）：登录页入口，免登录访问
+            "/user/workReport/**",
             "/product/pageQuery",
             "/product/category/tree"
     };
