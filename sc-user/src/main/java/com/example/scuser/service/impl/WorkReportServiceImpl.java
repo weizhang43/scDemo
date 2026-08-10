@@ -10,7 +10,8 @@ import com.example.scuser.mapper.WorkReportMapper;
 import com.example.scuser.service.WorkReportService;
 import com.example.scuser.util.MailUtil;
 import com.fasterxml.jackson.databind.JsonNode;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -36,13 +37,26 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-@Slf4j
+/**
+ * 工作报告服务：日报/周报的增删改查、邮件发送与模板生成。
+ */
 @Service
 public class WorkReportServiceImpl extends ServiceImpl<WorkReportMapper, WorkReport> implements WorkReportService {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(WorkReportServiceImpl.class);
 
     private static final String DEFAULT_CREATE_NAME = "zhangwei";
     private static final int TYPE_DAILY = 1;
     private static final int TYPE_WEEKLY = 2;
+
+    /** 分页查询默认每页条数 */
+    private static final int DEFAULT_PAGE_SIZE = 10;
+
+    /** git log 子进程最长等待秒数 */
+    private static final long GIT_LOG_TIMEOUT_SECONDS = 10L;
+
+    /** HTML 段落闭合标签 */
+    private static final String P_END = "</p>";
 
     @Autowired
     private MailUtil mailUtil;
@@ -59,7 +73,7 @@ public class WorkReportServiceImpl extends ServiceImpl<WorkReportMapper, WorkRep
     @Override
     public ResponseDto<WorkReport> pageQuery(Integer pageNum, Integer pageSize, Integer type) {
         long current = pageNum == null || pageNum < 1 ? 1 : pageNum;
-        long size = pageSize == null || pageSize < 1 ? 10 : pageSize;
+        long size = pageSize == null || pageSize < 1 ? DEFAULT_PAGE_SIZE : pageSize;
         LambdaQueryWrapper<WorkReport> wrapper = new LambdaQueryWrapper<WorkReport>()
                 .eq(type != null, WorkReport::getType, type)
                 .orderByDesc(WorkReport::getCreateTime);
@@ -134,19 +148,38 @@ public class WorkReportServiceImpl extends ServiceImpl<WorkReportMapper, WorkRep
 
     @Override
     public ResponseDto<WorkReport> sendReport(Long reportId, String email) {
-        if (reportId == null) {
-            return ResponseDto.error("报告ID不能为空");
-        }
-        if (!StringUtils.hasText(email) || !email.matches("^[\\w.%+-]+@[\\w.-]+\\.[A-Za-z]{2,}$")) {
-            return ResponseDto.error("邮箱格式不正确");
+        String error = validateSendReport(reportId, email);
+        if (error != null) {
+            return ResponseDto.error(error);
         }
         WorkReport report = baseMapper.selectById(reportId);
         if (report == null) {
             return ResponseDto.error("报告不存在");
         }
+        return doSendReport(report, email);
+    }
+
+    /**
+     * 发送前的入参校验，通过返回 null，否则返回错误提示。
+     */
+    private String validateSendReport(Long reportId, String email) {
+        if (reportId == null) {
+            return "报告ID不能为空";
+        }
+        boolean emailValid = StringUtils.hasText(email)
+                && email.matches("^[\\w.%+-]+@[\\w.-]+\\.[A-Za-z]{2,}$");
+        return emailValid ? null : "邮箱格式不正确";
+    }
+
+    /**
+     * 以 HTML 正文发送报告邮件。
+     */
+    private ResponseDto<WorkReport> doSendReport(WorkReport report, String email) {
         try {
-            mailUtil.sendHtmlTo(email, report.getTitle(), report.getContent() == null ? "" : report.getContent());
+            mailUtil.sendHtmlTo(email, report.getTitle(),
+                    report.getContent() == null ? "" : report.getContent());
         } catch (Exception e) {
+            LOGGER.warn("[工作报告] 邮件发送失败 email={}", email, e);
             return ResponseDto.error("邮件发送失败：" + e.getMessage());
         }
         return ResponseDto.success(report);
@@ -171,7 +204,7 @@ public class WorkReportServiceImpl extends ServiceImpl<WorkReportMapper, WorkRep
             html.append("<p>暂无</p>");
         } else {
             for (int i = 0; i < items.size(); i++) {
-                html.append("<p>").append(i + 1).append("、").append(escapeHtml(items.get(i))).append("</p>");
+                html.append("<p>").append(i + 1).append("、").append(escapeHtml(items.get(i))).append(P_END);
             }
         }
         html.append("<p>【问题及解决】</p><p>暂无</p>");
@@ -208,7 +241,7 @@ public class WorkReportServiceImpl extends ServiceImpl<WorkReportMapper, WorkRep
         html.append("<p>2. 未完成工作：</p><p>○无</p>");
         html.append("<p>【代码贡献】</p>");
         html.append("<p>●B2B</p>");
-        html.append("<p>○PRE合并：").append(mergedCount < 0 ? "获取失败" : mergedCount + "个").append("</p>");
+        html.append("<p>○PRE合并：").append(mergedCount < 0 ? "获取失败" : mergedCount + "个").append(P_END);
         html.append("<p>○代码提交：").append(commitCount).append("次</p>");
         html.append("<p>【问题与解决】</p><p>● 无</p>");
         html.append("<p>【技术要点】</p><p>● 主要涉及前后端功能联调、问题排查、修复缺陷、保障上线</p>");
@@ -222,7 +255,7 @@ public class WorkReportServiceImpl extends ServiceImpl<WorkReportMapper, WorkRep
             html.append("<p>●暂无</p>");
         } else {
             for (String item : items) {
-                html.append("<p>●").append(escapeHtml(item)).append("</p>");
+                html.append("<p>●").append(escapeHtml(item)).append(P_END);
             }
         }
     }
@@ -256,7 +289,7 @@ public class WorkReportServiceImpl extends ServiceImpl<WorkReportMapper, WorkRep
             JsonNode tokenResp = restTemplate.postForObject(gitlabProperties.getBaseUrl() + "/oauth/token",
                     new HttpEntity<>(body, jsonHeaders), JsonNode.class);
             if (tokenResp == null || !tokenResp.hasNonNull("access_token")) {
-                log.warn("[周报模板] GitLab 获取 token 失败");
+                LOGGER.warn("[周报模板] GitLab 获取 token 失败");
                 return -1;
             }
             HttpHeaders authHeaders = new HttpHeaders();
@@ -264,7 +297,8 @@ public class WorkReportServiceImpl extends ServiceImpl<WorkReportMapper, WorkRep
             String after = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX").format(weekStart);
             ResponseEntity<JsonNode> resp = restTemplate.exchange(
                     gitlabProperties.getBaseUrl()
-                            + "/api/v4/merge_requests?scope=created_by_me&state=merged&per_page=100&updated_after={after}",
+                            + "/api/v4/merge_requests?scope=created_by_me&state=merged"
+                            + "&per_page=100&updated_after={after}",
                     HttpMethod.GET, new HttpEntity<>(authHeaders), JsonNode.class, after);
             JsonNode list = resp.getBody();
             if (list == null || !list.isArray()) {
@@ -272,14 +306,16 @@ public class WorkReportServiceImpl extends ServiceImpl<WorkReportMapper, WorkRep
             }
             int count = 0;
             for (JsonNode mr : list) {
-                if (mr.hasNonNull("merged_at")
-                        && !OffsetDateTime.parse(mr.get("merged_at").asText()).toInstant().isBefore(weekStart.toInstant())) {
+                boolean mergedThisWeek = mr.hasNonNull("merged_at")
+                        && !OffsetDateTime.parse(mr.get("merged_at").asText()).toInstant()
+                                .isBefore(weekStart.toInstant());
+                if (mergedThisWeek) {
                     count++;
                 }
             }
             return count;
         } catch (Exception e) {
-            log.warn("[周报模板] GitLab 统计合并 MR 失败", e);
+            LOGGER.warn("[周报模板] GitLab 统计合并 MR 失败", e);
             return -1;
         }
     }
@@ -298,7 +334,7 @@ public class WorkReportServiceImpl extends ServiceImpl<WorkReportMapper, WorkRep
         List<String> subjects = new ArrayList<>();
         File dir = repoPath == null ? null : new File(repoPath);
         if (dir == null || !dir.isDirectory()) {
-            log.warn("[日报模板] 仓库目录不存在: {}", repoPath);
+            LOGGER.warn("[日报模板] 仓库目录不存在: {}", repoPath);
             return subjects;
         }
         try {
@@ -316,20 +352,20 @@ public class WorkReportServiceImpl extends ServiceImpl<WorkReportMapper, WorkRep
                     }
                 }
             }
-            if (!process.waitFor(10, TimeUnit.SECONDS)) {
+            if (!process.waitFor(GIT_LOG_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 process.destroyForcibly();
-                log.warn("[日报模板] git log 超时: {}", repoPath);
+                LOGGER.warn("[日报模板] git log 超时: {}", repoPath);
                 return new ArrayList<>();
             }
             if (process.exitValue() != 0) {
-                log.warn("[日报模板] git log 失败, exit={}, repo={}, output={}", process.exitValue(), repoPath, subjects);
+                LOGGER.warn("[日报模板] git log 失败, exit={}, repo={}, output={}", process.exitValue(), repoPath, subjects);
                 return new ArrayList<>();
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return new ArrayList<>();
         } catch (Exception e) {
-            log.warn("[日报模板] git log 异常, repo={}", repoPath, e);
+            LOGGER.warn("[日报模板] git log 异常, repo={}", repoPath, e);
             return new ArrayList<>();
         }
         return subjects;

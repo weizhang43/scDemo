@@ -1,40 +1,43 @@
 package com.example.scorder.service.impl;
 
-import com.alibaba.excel.EasyExcel;
-import com.alibaba.excel.ExcelWriter;
-import com.alibaba.excel.write.metadata.WriteSheet;
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.curry.model.*;
+import com.curry.model.Order;
+import com.curry.model.OrderItem;
+import com.curry.model.OrderMessage;
+import com.curry.model.SeckillActivity;
 import com.example.scorder.auth.OrderScope;
+import com.example.scorder.client.MockPayGatewayClient;
+import com.example.scorder.config.OrderTimeoutProperties;
 import com.example.scorder.config.RabbitMqConfig;
+import com.example.scorder.dto.OrderQueryRequest;
 import com.example.scorder.dto.PlaceOrderRequest;
 import com.example.scorder.dto.SeckillRequest;
+import com.example.scorder.entity.AfterSale;
 import com.example.scorder.entity.OrderStockRestoreMsg;
 import com.example.scorder.entity.PayRecord;
+import com.example.scorder.mapper.AfterSaleMapper;
 import com.example.scorder.mapper.OrderItemMapper;
 import com.example.scorder.mapper.OrderMapper;
 import com.example.scorder.mapper.OrderStockRestoreMsgMapper;
 import com.example.scorder.mq.SeckillOrderProducer;
 import com.example.scorder.service.OrderFeignService;
 import com.example.scorder.service.OrderService;
-import com.example.scorder.service.UserFeignService;
+import com.example.scorder.service.PayService;
+import com.example.scorder.vo.DailySalesVO;
+import com.example.scorder.vo.DashboardOverviewVO;
 import com.example.scorder.vo.MonthlySalesVO;
-import com.example.scorder.vo.OrderExportVO;
 import com.example.scorder.vo.OrderTimeoutVO;
 import com.example.scorder.vo.ProductSalesRankVO;
 import com.example.scorder.vo.SeckillResultVO;
 import com.example.scorder.vo.TypeSalesVO;
 import exception.BusinessException;
 import io.seata.spring.annotation.GlobalTransactional;
-import lombok.extern.slf4j.Slf4j;
-import org.redisson.api.RAtomicLong;
-import org.redisson.api.RBucket;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
@@ -48,24 +51,51 @@ import response.ResponseDto;
 import javax.servlet.http.HttpServletResponse;
 import java.io.Serializable;
 import java.math.BigDecimal;
-import java.net.URLEncoder;
-import java.text.DecimalFormat;
-import java.text.SimpleDateFormat;
-import java.time.YearMonth;
-import java.util.*;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
-
+/**
+ * 订单核心服务：列表查询/统计、状态机流转（支付/发货/取消/完成）、批量下单与秒杀入口。
+ * 下单落库、秒杀落库与 Excel 导出分别拆分到 OrderPlaceHelper、SeckillOrderHelper、OrderExportService。
+ */
 @Service
-@Slf4j
 public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements OrderService {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(OrderServiceImpl.class);
+
+    /**
+     * 订单取消状态码
+     */
+    public static final Integer CANCEL_ORDER_STATUS = -1;
+    /** 已支付待发货状态码 */
+    public static final Integer PLACED_ORDER_STATUS = 1;
+    /** 已完成状态码 */
+    public static final Integer COMPLETE_ORDER_STATUS = 2;
+    /** 待付款 */
+    public static final Integer UN_COMMIT_ORDER_STATUS = 0;
+    /** 已发货待收货状态码 */
+    public static final Integer SHIPPED_ORDER_STATUS = 3;
+
+    /** 订单不存在（越权访问也返回同一句，避免探测他人订单） */
+    private static final String MSG_ORDER_NOT_FOUND = "订单不存在";
+    /** 订单ID缺失 */
+    private static final String MSG_ORDER_ID_REQUIRED = "订单ID不能为空";
+    /** CAS 更新失败（状态已被并发变更） */
+    private static final String MSG_STATUS_CHANGED = "订单状态已变更，请刷新后重试";
+
+    /** 下单防重锁：等待时长（秒） */
+    private static final long PLACE_LOCK_WAIT_SECONDS = 3L;
+    /** 下单防重锁：持有时长（秒） */
+    private static final long PLACE_LOCK_LEASE_SECONDS = 30L;
+    /** 回库存本地消息最大重试次数 */
+    private static final int STOCK_RESTORE_MAX_RETRY = 5;
 
     @Autowired
     private OrderFeignService orderFeignService;
-
-    @Autowired
-    private UserFeignService userFeignService;
 
     @Autowired
     private OrderMapper orderMapper;
@@ -83,39 +113,32 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     private OrderStockRestoreMsgMapper orderStockRestoreMsgMapper;
 
     @Autowired
-    private com.example.scorder.mapper.AfterSaleMapper afterSaleMapper;
+    private AfterSaleMapper afterSaleMapper;
 
     @Autowired
-    private com.example.scorder.service.PayService payService;
+    private PayService payService;
 
     @Autowired
-    private com.example.scorder.client.MockPayGatewayClient mockPayGatewayClient;
-
-    @Autowired
-    private com.example.scorder.client.CouponClient couponClient;
+    private MockPayGatewayClient mockPayGatewayClient;
 
     @Autowired
     private RabbitTemplate rabbitTemplate;
 
-    /** 秒杀结果 key 前缀：seckill:result:{uId}:{activityId} */
-    private static final String SECKILL_RESULT_KEY = "seckill:result:";
-
-    /**
-     * 订单取消状态码
-     */
-    public static final Integer CANCEL_ORDER_STATUS = -1;
-    /** 已支付待发货状态码 */
-    public static final Integer PLACED_ORDER_STATUS = 1;
-    /** 已完成状态码 */
-    public static final Integer COMPLETE_ORDER_STATUS = 2;
-    /** 待付款 */
-    public static final Integer UN_COMMIT_ORDER_STATUS = 0;
-    /** 已发货待收货状态码 */
-    public static final Integer SHIPPED_ORDER_STATUS = 3;
-
     /** 订单超时时长（分钟）：状态为0的订单以 createTime + 该时长作为倒计时到期点 */
     @Autowired
-    private com.example.scorder.config.OrderTimeoutProperties orderTimeoutProperties;
+    private OrderTimeoutProperties orderTimeoutProperties;
+
+    @Autowired
+    private OrderPlaceHelper orderPlaceHelper;
+
+    @Autowired
+    private SeckillOrderHelper seckillOrderHelper;
+
+    @Autowired
+    private OrderExportService orderExportService;
+
+    @Autowired
+    private OrderStatsHelper orderStatsHelper;
 
     @Override
     public ResponseDto<OrderTimeoutVO> listTimeoutWarning() {
@@ -140,213 +163,93 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 .eq(StringUtils.hasText(addPerson), Order::getAddPerson, addPerson)
                 .orderByAsc(Order::getCreateTime);
         List<Order> orders = orderMapper.selectList(wrapper);
-        return orders.stream().map(o -> {
-            OrderTimeoutVO vo = new OrderTimeoutVO();
-            vo.setOId(o.getOId());
-            vo.setOrderNo(o.getOrderNo());
-            vo.setOrderAmount(o.getOrderAmount());
-            vo.setOrderStatus(o.getOrderStatus());
-            vo.setCreateTime(o.getCreateTime());
-            if (o.getCreateTime() != null) {
-                vo.setExpireTime(new Date(o.getCreateTime().getTime() + orderTimeoutProperties.getTimeoutMillis()));
-            }
-            return vo;
-        }).collect(Collectors.toList());
-    }
-
-    @Override
-    public ResponseDto<ProductSalesRankVO> listSalesRank(int limit, Integer merchantId) {
-        List<ProductSalesRankVO> rank = new ArrayList<>();
-        for (Map<String, Object> row : orderItemMapper.selectSalesRank(limit, merchantId)) {
-            ProductSalesRankVO vo = new ProductSalesRankVO();
-            vo.setPId(row.get("pId") == null ? null : ((Number) row.get("pId")).intValue());
-            vo.setPName((String) row.get("pName"));
-            vo.setSalesCount(row.get("salesCount") == null ? 0L : ((Number) row.get("salesCount")).longValue());
-            rank.add(vo);
-        }
-        if (rank.isEmpty()) {
-            // 传空列表会生成 IN ()，直接短路
-            return ResponseDto.success(rank);
-        }
-        // 补当前价格与图片；补不到就只展示名称+销量，不因下游异常让整个榜单失败
-        try {
-            List<Integer> pIds = rank.stream().map(ProductSalesRankVO::getPId).collect(Collectors.toList());
-            ResponseDto<Product> prodResp = orderFeignService.listSellableByIds(pIds);
-            if (prodResp != null && prodResp.getCode() != null && prodResp.getCode() == 200
-                    && prodResp.getDataList() != null) {
-                Map<Integer, Product> prodMap = new HashMap<>();
-                for (Product p : prodResp.getDataList()) {
-                    if (p.getPId() != null) prodMap.put(p.getPId(), p);
-                }
-                // listSellableByIds 只返回上架商品，查不到即已下架 —— 顾客首页要看不到
-                List<ProductSalesRankVO> sellableRank = new ArrayList<>();
-                for (ProductSalesRankVO vo : rank) {
-                    Product p = prodMap.get(vo.getPId());
-                    if (p == null) continue;
-                    vo.setPrice(p.getPrice());
-                    vo.setImageUrl(p.getImageUrl());
-                    vo.setDiscount(p.getDiscount());
-                    vo.setEffectivePrice(effectivePriceOf(p));
-                    if (p.getPName() != null) vo.setPName(p.getPName());
-                    sellableRank.add(vo);
-                }
-                rank = sellableRank;
-            }
-        } catch (Exception e) {
-            log.warn("[salesRank] 拉取商品价格/图片失败, err={}", e.getMessage());
-        }
-        return ResponseDto.success(rank);
-    }
-
-    @Override
-    public ResponseDto<TypeSalesVO> listTypeSales(Integer merchantId) {
-        return ResponseDto.success(orderItemMapper.selectTypeSales(merchantId));
+        return orders.stream().map(this::toTimeoutVO).collect(Collectors.toList());
     }
 
     /**
-     * 折线图断月会误导趋势，SQL 只返回有销量的月份，这里按近三个自然月骨架补 0。
+     * 组装超时预警行：到期时间 = createTime + 配置的超时时长。
+     */
+    private OrderTimeoutVO toTimeoutVO(Order o) {
+        OrderTimeoutVO vo = new OrderTimeoutVO();
+        vo.setOId(o.getOId());
+        vo.setOrderNo(o.getOrderNo());
+        vo.setOrderAmount(o.getOrderAmount());
+        vo.setOrderStatus(o.getOrderStatus());
+        vo.setCreateTime(o.getCreateTime());
+        if (o.getCreateTime() != null) {
+            vo.setExpireTime(new Date(o.getCreateTime().getTime() + orderTimeoutProperties.getTimeoutMillis()));
+        }
+        return vo;
+    }
+
+    /**
+     * 商品销量榜，统计逻辑拆分至 OrderStatsHelper。
+     */
+    @Override
+    public ResponseDto<ProductSalesRankVO> listSalesRank(int limit, Integer merchantId) {
+        return orderStatsHelper.listSalesRank(limit, merchantId);
+    }
+
+    /**
+     * 销量按商品类型分组统计，统计逻辑拆分至 OrderStatsHelper。
+     */
+    @Override
+    public ResponseDto<TypeSalesVO> listTypeSales(Integer merchantId) {
+        return orderStatsHelper.listTypeSales(merchantId);
+    }
+
+    /**
+     * 近三个自然月每月销量（缺月补 0），统计逻辑拆分至 OrderStatsHelper。
      */
     @Override
     public ResponseDto<MonthlySalesVO> listMonthlySales(Integer merchantId) {
-        Map<String, Long> salesByMonth = new HashMap<>();
-        for (MonthlySalesVO vo : orderItemMapper.selectMonthlySales(merchantId)) {
-            salesByMonth.put(vo.getMonth(), vo.getSalesCount() == null ? 0L : vo.getSalesCount());
-        }
-        List<MonthlySalesVO> result = new ArrayList<>();
-        YearMonth now = YearMonth.now();
-        for (int i = 2; i >= 0; i--) {
-            String month = now.minusMonths(i).toString();
-            result.add(new MonthlySalesVO(month, salesByMonth.getOrDefault(month, 0L)));
-        }
-        return ResponseDto.success(result);
+        return orderStatsHelper.listMonthlySales(merchantId);
     }
 
+    /**
+     * 首页工作台概览指标，统计逻辑拆分至 OrderStatsHelper。
+     */
     @Override
-    public ResponseDto<com.example.scorder.vo.DashboardOverviewVO> dashboardOverview(Integer merchantId) {
-        com.example.scorder.vo.DashboardOverviewVO vo = new com.example.scorder.vo.DashboardOverviewVO();
-        Map<String, Object> today = merchantId == null
-                ? orderMapper.selectTodayOverviewAll()
-                : orderItemMapper.selectTodayOverviewByMerchant(merchantId);
-        vo.setTodayGmv(today == null || today.get("todayGmv") == null
-                ? BigDecimal.ZERO : new BigDecimal(today.get("todayGmv").toString()));
-        vo.setTodayOrderCount(today == null || today.get("todayOrderCount") == null
-                ? 0L : ((Number) today.get("todayOrderCount")).longValue());
-
-        // 待发货/待付款：复用状态分组统计（商家/管理员 scope 均为全量，与订单列表口径一致）
-        Map<String, Long> statusCount = countByStatus(null, null, null, null, OrderScope.unrestricted());
-        vo.setPendingShipCount(statusCount.getOrDefault(String.valueOf(PLACED_ORDER_STATUS), 0L));
-        vo.setUnpaidCount(statusCount.getOrDefault(String.valueOf(UN_COMMIT_ORDER_STATUS), 0L));
-
-        vo.setPendingAfterSaleCount(afterSaleMapper.selectCount(
-                new LambdaQueryWrapper<com.example.scorder.entity.AfterSale>()
-                        .eq(com.example.scorder.entity.AfterSale::getStatus, 0)).longValue());
-        return ResponseDto.success(vo);
+    public ResponseDto<DashboardOverviewVO> dashboardOverview(Integer merchantId) {
+        return orderStatsHelper.dashboardOverview(merchantId);
     }
 
+    /**
+     * 近 N 天逐日成交趋势（缺日补 0），统计逻辑拆分至 OrderStatsHelper。
+     */
     @Override
-    public ResponseDto<com.example.scorder.vo.DailySalesVO> listDailySales(Integer merchantId, int days) {
-        List<Map<String, Object>> rows = merchantId == null
-                ? orderMapper.selectDailySalesAll(days)
-                : orderItemMapper.selectDailySalesByMerchant(merchantId, days);
-        Map<String, com.example.scorder.vo.DailySalesVO> byDate = new HashMap<>();
-        for (Map<String, Object> row : rows) {
-            String date = String.valueOf(row.get("date"));
-            BigDecimal gmv = row.get("gmv") == null ? BigDecimal.ZERO : new BigDecimal(row.get("gmv").toString());
-            Long cnt = row.get("orderCount") == null ? 0L : ((Number) row.get("orderCount")).longValue();
-            byDate.put(date, new com.example.scorder.vo.DailySalesVO(date, gmv, cnt));
-        }
-        List<com.example.scorder.vo.DailySalesVO> result = new ArrayList<>();
-        java.time.LocalDate today = java.time.LocalDate.now();
-        for (int i = days - 1; i >= 0; i--) {
-            String date = today.minusDays(i).toString();
-            result.add(byDate.getOrDefault(date,
-                    new com.example.scorder.vo.DailySalesVO(date, BigDecimal.ZERO, 0L)));
-        }
-        return ResponseDto.success(result);
+    public ResponseDto<DailySalesVO> listDailySales(Integer merchantId, int days) {
+        return orderStatsHelper.listDailySales(merchantId, days);
     }
-
 
     /**
      * 按关键字/订单号/创建时间区间分页查询订单，按创建时间与主键倒序返回。
      * scope 为顾客时追加 u_id 归属过滤。
      */
     @Override
-    public ResponseDto<Order> queryOrder(String key, String orderNo, Integer orderStatus, Date createTimeStart, Date createTimeEnd, int pageNo, int pageSize, OrderScope scope) {
-        Page<Order> page = new Page<>(pageNo, pageSize);
-        orderMapper.selectPageWithUserName(page, key, orderNo, orderStatus, createTimeStart, createTimeEnd, scope.getOwnerUId());
+    public ResponseDto<Order> queryOrder(OrderQueryRequest query, OrderScope scope) {
+        Page<Order> page = new Page<>(query.getPageNo(), query.getPageSize());
+        orderMapper.selectPageWithUserName(page, query.getKey(), query.getOrderNo(), query.getOrderStatus(),
+                query.getCreateTimeStart(), query.getCreateTimeEnd(), scope.getOwnerUId());
         return ResponseDto.success(page);
     }
 
     /**
-     * 统计各订单状态数量：无论是否有该状态订单，均返回 -1/0/1/2 四个 key，缺省为 0。
+     * 统计各订单状态数量（-1/0/1/2/3 五个 key 缺省补 0），统计逻辑拆分至 OrderStatsHelper。
      */
     @Override
-    public Map<String, Long> countByStatus(String key, String orderNo, Date createTimeStart, Date createTimeEnd, OrderScope scope) {
-        Map<String, Long> result = new HashMap<>();
-        result.put(String.valueOf(UN_COMMIT_ORDER_STATUS), 0L);
-        result.put(String.valueOf(PLACED_ORDER_STATUS), 0L);
-        result.put(String.valueOf(SHIPPED_ORDER_STATUS), 0L);
-        result.put(String.valueOf(COMPLETE_ORDER_STATUS), 0L);
-        result.put(String.valueOf(CANCEL_ORDER_STATUS), 0L);
-        List<Map<String, Object>> rows = orderMapper.countGroupByStatus(key, orderNo, createTimeStart, createTimeEnd, scope.getOwnerUId());
-        for (Map<String, Object> row : rows) {
-            Object status = row.get("orderStatus");
-            Object cnt = row.get("cnt");
-            if (status == null) {
-                continue;
-            }
-            result.put(String.valueOf(status), cnt == null ? 0L : ((Number) cnt).longValue());
-        }
-        return result;
+    public Map<String, Long> countByStatus(String key, String orderNo, Date createTimeStart,
+                                           Date createTimeEnd, OrderScope scope) {
+        return orderStatsHelper.countByStatus(key, orderNo, createTimeStart, createTimeEnd, scope);
     }
 
     /**
-     * 按查询条件导出订单 Excel：分页查询 + 复用 ExcelWriter 分批写入响应流，
-     * 避免一次性 selectList 全量载入内存（数据量大时 OOM）。
-     * @param response Servlet 响应，文件名以 UTF-8 编码避免中文乱码
+     * 按查询条件导出订单 Excel，逻辑拆分至 OrderExportService。
      */
     @Override
-    public void export(String key, String orderNo, Date createTimeStart, Date createTimeEnd, OrderScope scope, HttpServletResponse response) throws Exception {
-        LambdaQueryWrapper<Order> queryWrapper = new LambdaQueryWrapper<Order>()
-                .eq(scope.getOwnerUId() != null, Order::getUId, scope.getOwnerUId())
-                .like(key != null && !key.isEmpty(), Order::getAddPerson, key)
-                .like(orderNo != null && !orderNo.isEmpty(), Order::getOrderNo, orderNo)
-                .ge(createTimeStart != null, Order::getCreateTime, createTimeStart)
-                .le(createTimeEnd != null, Order::getCreateTime, createTimeEnd)
-                .orderByDesc(Order::getCreateTime)
-                .orderByDesc(Order::getOId);
-
-        response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-        response.setCharacterEncoding("utf-8");
-        String fileName = URLEncoder.encode("订单列表", "UTF-8").replaceAll("\\+", "%20");
-        response.setHeader("Content-disposition", "attachment;filename*=UTF-8''" + fileName + ".xlsx");
-
-        int pageSize = 1000;
-        try (ExcelWriter writer = EasyExcel.write(response.getOutputStream(), OrderExportVO.class).build()) {
-            WriteSheet sheet = EasyExcel.writerSheet("订单列表").build();
-            int pageNo = 1;
-            int serial = 0;
-            while (true) {
-                Page<Order> page = new Page<>(pageNo, pageSize, false);
-                List<Order> records = orderMapper.selectPage(page, queryWrapper).getRecords();
-                if (records == null || records.isEmpty()) {
-                    if (pageNo == 1) {
-                        // 空数据也要写一次空列表，保证导出文件带表头
-                        writer.write(new ArrayList<OrderExportVO>(), sheet);
-                    }
-                    break;
-                }
-                List<OrderExportVO> rows = new ArrayList<>(records.size());
-                for (Order order : records) {
-                    rows.add(OrderExportVO.of(order, ++serial));
-                }
-                writer.write(rows, sheet);
-                if (records.size() < pageSize) {
-                    break;
-                }
-                pageNo++;
-            }
-        }
+    public void export(String key, String orderNo, Date createTimeStart, Date createTimeEnd,
+                       OrderScope scope, HttpServletResponse response) throws Exception {
+        orderExportService.export(key, orderNo, createTimeStart, createTimeEnd, scope, response);
     }
 
     /**
@@ -360,29 +263,16 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     @Override
     @GlobalTransactional
     public ResponseDto<Order> placeOrder(PlaceOrderRequest request) {
-        if (request == null || request.getItems() == null || request.getItems().isEmpty()) {
-            return ResponseDto.error("下单商品列表为空");
-        }
-        if (request.getUId() == null) {
-            return ResponseDto.error("用户ID不能为空");
-        }
-
+        validatePlaceRequest(request);
         // 入口分布式锁：防同一用户对同一批商品重复下单
-        String itemsKey = request.getItems().stream()
-                .map(PlaceOrderRequest.Item::getPId)
-                .filter(Objects::nonNull)
-                .sorted()
-                .map(String::valueOf)
-                .collect(Collectors.joining(","));
-        String lockKey = "lock:order:place:" + request.getUId() + ":" + itemsKey.hashCode();
-        RLock lock = redissonClient.getLock(lockKey);
+        RLock lock = redissonClient.getLock(buildPlaceLockKey(request));
         boolean locked = false;
         try {
-            locked = lock.tryLock(3, 30, TimeUnit.SECONDS);
+            locked = lock.tryLock(PLACE_LOCK_WAIT_SECONDS, PLACE_LOCK_LEASE_SECONDS, TimeUnit.SECONDS);
             if (!locked) {
                 return ResponseDto.error("下单处理中，请勿重复提交");
             }
-            return doPlaceOrder(request);
+            return orderPlaceHelper.doPlaceOrder(request);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return ResponseDto.error("下单加锁中断");
@@ -394,181 +284,28 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     }
 
     /**
-     * 实际下单逻辑：扣库存 → 拉地址快照 → 写订单 → 批量写订单商品中间表，附带商品名称快照。
-     * 任一步失败由 Seata 全局回滚保证最终一致。
+     * 下单入参基础校验，失败抛业务异常（由全局异常处理器转 error 返回）。
      */
-    private ResponseDto<Order> doPlaceOrder(PlaceOrderRequest request) {
-        // 1. 先拉服务端权威商品信息：已下架/已删除的直接拒单，同时拿到折后价与名称快照
-        List<Integer> pIds = new ArrayList<>();
-        for (PlaceOrderRequest.Item it : request.getItems()) {
-            pIds.add(it.getPId());
+    private void validatePlaceRequest(PlaceOrderRequest request) {
+        if (request == null || request.getItems() == null || request.getItems().isEmpty()) {
+            throw new BusinessException("下单商品列表为空");
         }
-        Map<Integer, Product> sellable = new HashMap<>();
-        ResponseDto<Product> prodResp = orderFeignService.listSellableByIds(pIds);
-        if (prodResp != null && prodResp.getCode() != null && prodResp.getCode() == 200
-                && prodResp.getDataList() != null) {
-            for (Product p : prodResp.getDataList()) {
-                if (p.getPId() != null) sellable.put(p.getPId(), p);
-            }
+        if (request.getUId() == null) {
+            throw new BusinessException("用户ID不能为空");
         }
-        for (PlaceOrderRequest.Item it : request.getItems()) {
-            Product p = sellable.get(it.getPId());
-            if (p == null) {
-                return ResponseDto.error("商品已下架或不存在，无法下单");
-            }
-            // 前端展示价与服务端有效价不一致：促销恰在下单瞬间开始/结束，拒单让用户看到新价格
-            if (it.getExpectedPrice() != null
-                    && it.getExpectedPrice().compareTo(effectivePriceOf(p)) != 0) {
-                return ResponseDto.error("商品「" + p.getPName() + "」价格已更新，请刷新后重新下单");
-            }
-        }
-
-        // 2. 组装扣库存入参
-        List<Product> deductItems = new ArrayList<>();
-        for (PlaceOrderRequest.Item it : request.getItems()) {
-            Product p = new Product();
-            p.setPId(it.getPId());
-            p.setStock(it.getQuantity());
-            deductItems.add(p);
-        }
-        ResponseDto<Product> deduct = orderFeignService.checkAndDeductStock(deductItems);
-        if (deduct == null || deduct.getCode() == null || deduct.getCode() != 200) {
-            String msg = deduct == null ? "扣减库存失败" : deduct.getMsg();
-            return ResponseDto.error(msg == null ? "扣减库存失败" : msg);
-        }
-
-        // 3. 拉取收货地址快照
-        String orderAddress = "";
-        if (request.getAddressId() != null) {
-            try {
-                ResponseDto<Address> addrResp = userFeignService.getAddress(request.getAddressId());
-                if (addrResp != null && addrResp.getCode() != null && addrResp.getCode() == 200
-                        && addrResp.getDaoResult() != null) {
-                    Address addr = JSON.parseObject(JSON.toJSONString(addrResp.getDaoResult()),Address.class);
-                    orderAddress = buildAddressText(addr);
-                }
-            } catch (Exception e) {
-                log.warn("拉取收货地址失败 addressId={}, err={}", request.getAddressId(), e.getMessage());
-            }
-        }
-
-        // 4. 创建订单
-        Order order = new Order();
-        order.setAddPerson(request.getAddPerson() == null || request.getAddPerson().isEmpty()
-                ? "anonymous" : request.getAddPerson());
-        order.setUId(request.getUId());
-        order.setCreateTime(new Date());
-        order.setOrderStatus(request.getOrderStatus());
-        order.setOrderNo(generateOrderNo());
-        order.setOrderAddress(orderAddress);
-
-        // 订单金额：sum(服务端有效价 * quantity)，不采信前端传来的价格
-        BigDecimal amount = BigDecimal.ZERO;
-        for (PlaceOrderRequest.Item it : request.getItems()) {
-            BigDecimal price = effectivePriceOf(sellable.get(it.getPId()));
-            int qty = it.getQuantity() == null ? 0 : it.getQuantity();
-            amount = amount.add(price.multiply(BigDecimal.valueOf(qty)));
-        }
-
-        // 优惠券：锁券(0→1)并按服务端权威规则取抵扣额，orderAmount 落券后实付。
-        // 库存已扣，此处任何失败必须抛异常走 Seata 全局回滚（连带回滚已扣库存与券锁定），
-        // 直接 return error 会漏放已扣的库存
-        if (request.getCouponId() != null) {
-            ResponseDto<Object> lockResp =
-                    couponClient.lock(request.getCouponId(), request.getUId(), amount);
-            if (lockResp == null || lockResp.getCode() == null || lockResp.getCode() != 200
-                    || lockResp.getDaoResult() == null) {
-                String msg = lockResp == null ? null : lockResp.getMsg();
-                throw new BusinessException(msg == null ? "优惠券不可用" : msg);
-            }
-            JSONObject locked = JSON.parseObject(JSON.toJSONString(lockResp.getDaoResult()));
-            BigDecimal deduction = locked.getBigDecimal("couponAmount");
-            if (deduction == null || deduction.compareTo(BigDecimal.ZERO) < 0) {
-                throw new BusinessException("优惠券抵扣金额异常");
-            }
-            BigDecimal payAmount = amount.subtract(deduction).max(BigDecimal.ZERO);
-            // 页面展示的券后价与服务端重算不符：价格或券规则恰在下单瞬间变化，拒单让用户看到新金额
-            if (request.getExpectedPayAmount() != null
-                    && request.getExpectedPayAmount().compareTo(payAmount) != 0) {
-                throw new BusinessException("订单金额已变化，请刷新后重新下单");
-            }
-            order.setCouponId(request.getCouponId());
-            order.setCouponAmount(deduction);
-            amount = payAmount;
-        }
-        order.setOrderAmount(amount);
-        orderMapper.insert(order);
-
-        // 5. 写订单商品中间表，价格与名称均取服务端快照
-        List<OrderItem> itemRecords = new ArrayList<>();
-        for (PlaceOrderRequest.Item it : request.getItems()) {
-            Product p = sellable.get(it.getPId());
-            OrderItem oi = new OrderItem();
-            oi.setOId(order.getOId());
-            oi.setPId(it.getPId());
-            oi.setQuantity(it.getQuantity());
-            oi.setPrice(effectivePriceOf(p));
-            oi.setPName(p.getPName());
-            itemRecords.add(oi);
-        }
-        if (!itemRecords.isEmpty()) {
-            orderItemMapper.insertBatch(itemRecords);
-        }
-        if(UN_COMMIT_ORDER_STATUS.compareTo(request.getOrderStatus()) == 0){
-            // 超时用消息级 TTL：取下单时刻的 Nacos 配置值，到期死信到 dlx_queue 触发取消
-            final String ttl = String.valueOf(orderTimeoutProperties.getTimeoutMillis());
-            rabbitTemplate.convertAndSend("", RabbitMqConfig.QUEUE_ORDER, order.getOId(), message -> {
-                message.getMessageProperties().setExpiration(ttl);
-                return message;
-            });
-        }
-
-
-        return ResponseDto.success(order);
     }
 
     /**
-     * 商品的服务端有效单价：sc-product 已回填折后价则用它，否则退回原价。
+     * 下单防重锁 key：用户ID + 本批商品ID集合的散列。
      */
-    private BigDecimal effectivePriceOf(Product p) {
-        if (p == null) {
-            return BigDecimal.ZERO;
-        }
-        if (p.getEffectivePrice() != null) {
-            return p.getEffectivePrice();
-        }
-        return p.getPrice() == null ? BigDecimal.ZERO : BigDecimal.valueOf(p.getPrice());
-    }
-
-    /**
-     * 把地址对象拼接为单行文本：收件人 + 电话 + 省市区 + 详情。
-     */
-    private String buildAddressText(Address addr) {
-        StringBuilder sb = new StringBuilder();
-        if (addr.getConsignee() != null) sb.append(addr.getConsignee()).append(' ');
-        if (addr.getPhone() != null) sb.append(addr.getPhone()).append(' ');
-        if (addr.getProvince() != null) sb.append(addr.getProvince());
-        if (addr.getCity() != null) sb.append(addr.getCity());
-        if (addr.getDistrict() != null) sb.append(addr.getDistrict());
-        if (addr.getDetail() != null) sb.append(addr.getDetail());
-        return sb.toString().trim();
-    }
-
-    /**
-     * 生成订单编号：ORD + yyyyMMdd + 流水号（当日 Redis 自增，至少 4 位）。
-     * 旧实现基于 count(当日订单)+1，并发下会生成重复单号；Redis INCR 原子自增无此问题。
-     */
-    private String generateOrderNo() {
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMdd");
-        String dayPrefix = sdf.format(new Date());
-        RAtomicLong seqCounter = redissonClient.getAtomicLong("order:no:seq:" + dayPrefix);
-        long seq = seqCounter.incrementAndGet();
-        if (seq == 1) {
-            // 跨天后旧 key 不再使用，两天后自动清理
-            seqCounter.expire(2, TimeUnit.DAYS);
-        }
-        DecimalFormat df = new DecimalFormat("0000");
-        return "ORD" + dayPrefix + df.format(seq);
+    private String buildPlaceLockKey(PlaceOrderRequest request) {
+        String itemsKey = request.getItems().stream()
+                .map(PlaceOrderRequest.Item::getPId)
+                .filter(Objects::nonNull)
+                .sorted()
+                .map(String::valueOf)
+                .collect(Collectors.joining(","));
+        return "lock:order:place:" + request.getUId() + ":" + itemsKey.hashCode();
     }
 
     /**
@@ -579,31 +316,35 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     @Override
     @Transactional(rollbackFor = Exception.class)
     public ResponseDto<Order> updateStatus(Integer id, Integer orderStatus, OrderScope scope) {
+        Order exists = loadOrderForStatusUpdate(id, orderStatus, scope);
+        return doUpdateStatus(exists, orderStatus);
+    }
+
+    /**
+     * 状态更新前置校验：目标状态合法性、订单存在性与归属鉴权，不通过抛业务异常。
+     */
+    private Order loadOrderForStatusUpdate(Integer id, Integer orderStatus, OrderScope scope) {
         if (id == null) {
-            return ResponseDto.error("订单ID不能为空");
+            throw new BusinessException(MSG_ORDER_ID_REQUIRED);
         }
-        if (!CANCEL_ORDER_STATUS.equals(orderStatus)
-                && !PLACED_ORDER_STATUS.equals(orderStatus)
+        // 已发货(3)必须走 ship 接口带快递信息，禁止通过本接口裸改状态
+        if (SHIPPED_ORDER_STATUS.equals(orderStatus)) {
+            throw new BusinessException("发货请通过发货接口提交快递信息");
+        }
+        if (!CANCEL_ORDER_STATUS.equals(orderStatus) && !PLACED_ORDER_STATUS.equals(orderStatus)
                 && !COMPLETE_ORDER_STATUS.equals(orderStatus)) {
-            // 已发货(3)必须走 ship 接口带快递信息，禁止通过本接口裸改状态
-            if (SHIPPED_ORDER_STATUS.equals(orderStatus)) {
-                return ResponseDto.error("发货请通过发货接口提交快递信息");
-            }
-            return ResponseDto.error("订单状态非法(-1:订单取消 1:已支付 2:已完成 3:已发货)");
+            throw new BusinessException("订单状态非法(-1:订单取消 1:已支付 2:已完成 3:已发货)");
         }
         Order exists = orderMapper.selectById(id);
-        if (exists == null) {
-            return ResponseDto.error("订单不存在");
-        }
         // 越权与不存在返回同一句提示，避免顾客探测他人订单是否存在
-        if (!scope.canManage(exists.getUId())) {
-            return ResponseDto.error("订单不存在");
+        if (exists == null || !scope.canManage(exists.getUId())) {
+            throw new BusinessException(MSG_ORDER_NOT_FOUND);
         }
         // 支付后门加固：顾客不得直设已支付，0→1 只能由支付回调（PayServiceImpl）驱动
         if (PLACED_ORDER_STATUS.equals(orderStatus) && !scope.isUnrestricted()) {
-            return ResponseDto.error("请通过收银台完成支付");
+            throw new BusinessException("请通过收银台完成支付");
         }
-        return doUpdateStatus(exists, orderStatus);
+        return exists;
     }
 
     /**
@@ -613,40 +354,42 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     @Override
     @Transactional(rollbackFor = Exception.class)
     public ResponseDto<Order> ship(Integer id, String shippingCompany, String trackingNo, OrderScope scope) {
-        if (id == null) {
-            return ResponseDto.error("订单ID不能为空");
-        }
-        if (!StringUtils.hasText(shippingCompany) || !StringUtils.hasText(trackingNo)) {
-            return ResponseDto.error("快递公司与快递单号不能为空");
-        }
-        // 顾客无发货权限；商家/管理员/内部调用 scope 为 unrestricted
-        if (!scope.isUnrestricted()) {
-            return ResponseDto.error("无权执行发货操作");
-        }
-        Order exists = orderMapper.selectById(id);
-        if (exists == null) {
-            return ResponseDto.error("订单不存在");
-        }
+        Order exists = loadShippableOrder(id, shippingCompany, trackingNo, scope);
         if (SHIPPED_ORDER_STATUS.equals(exists.getOrderStatus())) {
             // 已发货视为幂等成功，避免商家重复点击报错
             return ResponseDto.success(null);
         }
-        if (!PLACED_ORDER_STATUS.equals(exists.getOrderStatus())) {
-            return ResponseDto.error("仅已支付订单可以发货");
-        }
         int rows = orderMapper.casShip(id, exists.getVersion(), shippingCompany.trim(), trackingNo.trim());
         if (rows == 0) {
-            return ResponseDto.error("订单状态已变更，请刷新后重试");
+            return ResponseDto.error(MSG_STATUS_CHANGED);
         }
-        final String addPerson = exists.getAddPerson();
-        final String orderNo = exists.getOrderNo();
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                toSendMail(addPerson, orderNo, SHIPPED_ORDER_STATUS);
-            }
-        });
+        registerStatusMailAfterCommit(exists.getAddPerson(), exists.getOrderNo(), SHIPPED_ORDER_STATUS);
         return ResponseDto.success();
+    }
+
+    /**
+     * 发货前置校验：入参、权限、存在性与当前状态（已支付或已发货），不通过抛业务异常。
+     */
+    private Order loadShippableOrder(Integer id, String shippingCompany, String trackingNo, OrderScope scope) {
+        if (id == null) {
+            throw new BusinessException(MSG_ORDER_ID_REQUIRED);
+        }
+        if (!StringUtils.hasText(shippingCompany) || !StringUtils.hasText(trackingNo)) {
+            throw new BusinessException("快递公司与快递单号不能为空");
+        }
+        // 顾客无发货权限；商家/管理员/内部调用 scope 为 unrestricted
+        if (!scope.isUnrestricted()) {
+            throw new BusinessException("无权执行发货操作");
+        }
+        Order exists = orderMapper.selectById(id);
+        if (exists == null) {
+            throw new BusinessException(MSG_ORDER_NOT_FOUND);
+        }
+        if (!PLACED_ORDER_STATUS.equals(exists.getOrderStatus())
+                && !SHIPPED_ORDER_STATUS.equals(exists.getOrderStatus())) {
+            throw new BusinessException("仅已支付订单可以发货");
+        }
+        return exists;
     }
 
     /**
@@ -656,15 +399,12 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     @Override
     @Transactional(rollbackFor = Exception.class)
     public ResponseDto<Order> cancelUnSubmitted(Integer id) {
-        if (id == null) {
-            return ResponseDto.error("订单ID不能为空");
-        }
-        Order exists = orderMapper.selectById(id);
+        Order exists = id == null ? null : orderMapper.selectById(id);
         if (exists == null) {
-            return ResponseDto.error("订单不存在");
+            return ResponseDto.error(id == null ? MSG_ORDER_ID_REQUIRED : MSG_ORDER_NOT_FOUND);
         }
         if (!Objects.equals(exists.getOrderStatus(), UN_COMMIT_ORDER_STATUS)) {
-            log.info("订单 {} 当前状态为 {}，非待付款，跳过超时取消", id, exists.getOrderStatus());
+            LOGGER.info("订单 {} 当前状态为 {}，非待付款，跳过超时取消", id, exists.getOrderStatus());
             return ResponseDto.success(null);
         }
         return doUpdateStatus(exists, CANCEL_ORDER_STATUS);
@@ -677,18 +417,19 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
      * 支付(0→1)不触碰库存 —— 库存在下单时已扣减。
      */
     private boolean isTransitionAllowed(Integer currentStatus, Integer targetStatus) {
+        boolean allowed;
         if (Objects.equals(currentStatus, UN_COMMIT_ORDER_STATUS)) {
-            return PLACED_ORDER_STATUS.equals(targetStatus) || CANCEL_ORDER_STATUS.equals(targetStatus);
-        }
-        if (Objects.equals(currentStatus, PLACED_ORDER_STATUS)) {
-            return SHIPPED_ORDER_STATUS.equals(targetStatus)
+            allowed = PLACED_ORDER_STATUS.equals(targetStatus) || CANCEL_ORDER_STATUS.equals(targetStatus);
+        } else if (Objects.equals(currentStatus, PLACED_ORDER_STATUS)) {
+            allowed = SHIPPED_ORDER_STATUS.equals(targetStatus)
                     || COMPLETE_ORDER_STATUS.equals(targetStatus)
                     || CANCEL_ORDER_STATUS.equals(targetStatus);
+        } else if (Objects.equals(currentStatus, SHIPPED_ORDER_STATUS)) {
+            allowed = COMPLETE_ORDER_STATUS.equals(targetStatus);
+        } else {
+            allowed = false;
         }
-        if (Objects.equals(currentStatus, SHIPPED_ORDER_STATUS)) {
-            return COMPLETE_ORDER_STATUS.equals(targetStatus);
-        }
-        return false;
+        return allowed;
     }
 
     /**
@@ -696,59 +437,76 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
      * 调用方负责鉴权与目标状态合法性校验。
      */
     private ResponseDto<Order> doUpdateStatus(Order exists, Integer orderStatus) {
-        Integer id = exists.getOId();
-        Integer currentStatus = exists.getOrderStatus();
         // 已经是目标状态则视为幂等成功
-        if (Objects.equals(currentStatus, orderStatus)) {
+        if (Objects.equals(exists.getOrderStatus(), orderStatus)) {
             return ResponseDto.success(null);
         }
-        if (!isTransitionAllowed(currentStatus, orderStatus)) {
+        if (!isTransitionAllowed(exists.getOrderStatus(), orderStatus)) {
             return ResponseDto.error("当前订单状态不允许该操作");
         }
-        // CAS 更新：version + 前置状态双重校验，并发下只有一个请求成功
-        int rows = orderMapper.casUpdateStatus(id, currentStatus, orderStatus, exists.getVersion());
+        return casUpdateAndNotify(exists, orderStatus);
+    }
+
+    /**
+     * CAS 更新：version + 前置状态双重校验，并发下只有一个请求成功；
+     * 成功后处理取消侧效应并在事务提交后发通知邮件（避免回滚后用户仍收到通知）。
+     */
+    private ResponseDto<Order> casUpdateAndNotify(Order exists, Integer orderStatus) {
+        int rows = orderMapper.casUpdateStatus(
+                exists.getOId(), exists.getOrderStatus(), orderStatus, exists.getVersion());
         if (rows == 0) {
             // 被其他请求抢先变更；幂等返回，不抛错以免前端误重试放大流量
-            return ResponseDto.error("订单状态已变更，请刷新后重试");
+            return ResponseDto.error(MSG_STATUS_CHANGED);
         }
         if (CANCEL_ORDER_STATUS.equals(orderStatus)) {
-            // 同事务写入本地消息表，异步回库存；uk_o_id 唯一索引兜底重复取消
-            OrderStockRestoreMsg msg = new OrderStockRestoreMsg();
-            msg.setOId(id);
-            msg.setStatus(0);
-            msg.setRetryCnt(0);
-            msg.setMaxRetry(5);
-            msg.setNextRetry(new Date());
-            try {
-                orderStockRestoreMsgMapper.insert(msg);
-            } catch (DuplicateKeyException dupEx) {
-                // 消息已存在，说明已有取消任务在途，无需重复写
-                log.info("订单 {} 回库存消息已存在，跳过写入", id);
-            }
-            // 同事务关闭在途支付单（CAS 0→3）；支付回调若先赢 CAS，此处返回 null，
-            // 而订单 CAS 也已失败返回，不会走到这里 —— 谁先 CAS 赢谁
-            final PayRecord closedPay = payService.closePayForOrder(id);
-            if (closedPay != null && closedPay.getTransactionId() != null) {
-                // 提交后 best-effort 关网关侧交易单；失败无碍：本地已关，迟到回调会被拒
-                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                    @Override
-                    public void afterCommit() {
-                        mockPayGatewayClient.closeTxn(closedPay.getTransactionId());
-                    }
-                });
-            }
+            registerCancelSideEffects(exists.getOId());
         }
-        //事务提交成功后再发 MQ 邮件通知，避免回滚后用户仍收到通知
-        final String addPerson = exists.getAddPerson();
-        final String orderNo = exists.getOrderNo();
+        registerStatusMailAfterCommit(exists.getAddPerson(), exists.getOrderNo(), orderStatus);
+        return ResponseDto.success();
+    }
+
+    /**
+     * 取消侧效应：同事务写回库存本地消息 + 关闭在途支付单，提交后 best-effort 关网关侧交易单。
+     */
+    private void registerCancelSideEffects(Integer id) {
+        // 同事务写入本地消息表，异步回库存；uk_o_id 唯一索引兜底重复取消
+        OrderStockRestoreMsg msg = new OrderStockRestoreMsg();
+        msg.setOId(id);
+        msg.setStatus(0);
+        msg.setRetryCnt(0);
+        msg.setMaxRetry(STOCK_RESTORE_MAX_RETRY);
+        msg.setNextRetry(new Date());
+        try {
+            orderStockRestoreMsgMapper.insert(msg);
+        } catch (DuplicateKeyException dupEx) {
+            // 消息已存在，说明已有取消任务在途，无需重复写
+            LOGGER.info("订单 {} 回库存消息已存在，跳过写入", id, dupEx);
+        }
+        // 同事务关闭在途支付单（CAS 0→3）；支付回调若先赢 CAS，此处返回 null，
+        // 而订单 CAS 也已失败返回，不会走到这里 —— 谁先 CAS 赢谁
+        final PayRecord closedPay = payService.closePayForOrder(id);
+        if (closedPay != null && closedPay.getTransactionId() != null) {
+            // 提交后 best-effort 关网关侧交易单；失败无碍：本地已关，迟到回调会被拒
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    mockPayGatewayClient.closeTxn(closedPay.getTransactionId());
+                }
+            });
+        }
+    }
+
+    /**
+     * 事务提交成功后再发 MQ 邮件通知，避免回滚后用户仍收到通知。
+     */
+    private void registerStatusMailAfterCommit(final String addPerson, final String orderNo,
+                                               final Integer orderStatus) {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
                 toSendMail(addPerson, orderNo, orderStatus);
             }
         });
-
-        return ResponseDto.success();
     }
 
     /**
@@ -759,14 +517,17 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         if (PLACED_ORDER_STATUS.equals(orderStatus)) {
             return;
         }
-        String subject = "订单完成通知";
-        String message = "您好，编号为【" + orderNo + "】的订单已经完成，可前往系统进行查看";
+        String subject;
+        String message;
         if (CANCEL_ORDER_STATUS.equals(orderStatus)) {
             subject = "订单取消通知";
             message = "您好，编号为【" + orderNo + "】的订单已经取消，可前往系统进行查看";
         } else if (SHIPPED_ORDER_STATUS.equals(orderStatus)) {
             subject = "订单发货通知";
             message = "您好，编号为【" + orderNo + "】的订单已发货，可前往系统查看物流信息";
+        } else {
+            subject = "订单完成通知";
+            message = "您好，编号为【" + orderNo + "】的订单已经完成，可前往系统进行查看";
         }
         OrderMessage orderMessage = new OrderMessage(addPerson, subject, message);
         try {
@@ -775,9 +536,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                     RabbitMqConfig.ROUTING_KEY_EMAIL,
                     orderMessage
             );
-            log.info("订单 {} 状态变更邮件通知已投递", orderNo);
+            LOGGER.info("订单 {} 状态变更邮件通知已投递", orderNo);
         } catch (Exception e) {
-            log.error("订单 {} 状态变更邮件通知投递失败", orderNo, e);
+            LOGGER.error("订单 {} 状态变更邮件通知投递失败", orderNo, e);
         }
     }
 
@@ -794,18 +555,26 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         try {
             List<OrderItem> items = orderItemMapper.selectList(
                     new LambdaQueryWrapper<OrderItem>().eq(OrderItem::getOId, order.getOId()));
-            if (items != null && !items.isEmpty()) {
-                for (OrderItem it : items) {
-                    if (it.getPrice() != null && it.getQuantity() != null) {
-                        it.setSubtotal(it.getPrice().multiply(BigDecimal.valueOf(it.getQuantity())));
-                    }
-                }
-                order.setOrderItems(items);
-            }
+            fillSubtotal(order, items);
         } catch (Exception e) {
-            log.warn("查询订单商品明细失败 oId={}, err={}", order.getOId(), e.getMessage());
+            LOGGER.warn("查询订单商品明细失败 oId={}", order.getOId(), e);
         }
         return order;
+    }
+
+    /**
+     * 计算明细小计（单价×数量）并挂到订单上。
+     */
+    private void fillSubtotal(Order order, List<OrderItem> items) {
+        if (items == null || items.isEmpty()) {
+            return;
+        }
+        for (OrderItem it : items) {
+            if (it.getPrice() != null && it.getQuantity() != null) {
+                it.setSubtotal(it.getPrice().multiply(BigDecimal.valueOf(it.getQuantity())));
+            }
+        }
+        order.setOrderItems(items);
     }
 
     /**
@@ -827,30 +596,35 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
      */
     @Override
     public ResponseDto<Order> removeOrder(Integer id, OrderScope scope) {
+        checkRemovable(id, scope);
+        int rows = orderMapper.deleteById(id);
+        return rows > 0 ? ResponseDto.success(null) : ResponseDto.error("删除订单失败");
+    }
+
+    /**
+     * 删除前置校验：存在性、归属、终态、无在途售后，不通过抛业务异常。
+     */
+    private void checkRemovable(Integer id, OrderScope scope) {
         if (id == null) {
-            return ResponseDto.error("订单ID不能为空");
+            throw new BusinessException(MSG_ORDER_ID_REQUIRED);
         }
         Order exists = orderMapper.selectById(id);
         if (exists == null || !scope.canManage(exists.getUId())) {
-            return ResponseDto.error("订单不存在");
+            throw new BusinessException(MSG_ORDER_NOT_FOUND);
         }
         Integer status = exists.getOrderStatus();
         if (!CANCEL_ORDER_STATUS.equals(status) && !COMPLETE_ORDER_STATUS.equals(status)) {
-            return ResponseDto.error("仅已取消或已完成的订单可以删除");
+            throw new BusinessException("仅已取消或已完成的订单可以删除");
         }
         // 售后在途（待审核/退款中）的订单不可删：退款与库存回补都以 o_id 关联本单
-        com.example.scorder.entity.AfterSale inflight = afterSaleMapper.selectOne(
-                new LambdaQueryWrapper<com.example.scorder.entity.AfterSale>()
-                        .eq(com.example.scorder.entity.AfterSale::getOId, id)
-                        .in(com.example.scorder.entity.AfterSale::getStatus,
-                                com.example.scorder.entity.AfterSale.STATUS_PENDING,
-                                com.example.scorder.entity.AfterSale.STATUS_REFUNDING)
+        AfterSale inflight = afterSaleMapper.selectOne(
+                new LambdaQueryWrapper<AfterSale>()
+                        .eq(AfterSale::getOId, id)
+                        .in(AfterSale::getStatus, AfterSale.STATUS_PENDING, AfterSale.STATUS_REFUNDING)
                         .last("LIMIT 1"));
         if (inflight != null) {
-            return ResponseDto.error("该订单存在处理中的售后申请，无法删除");
+            throw new BusinessException("该订单存在处理中的售后申请，无法删除");
         }
-        int rows = orderMapper.deleteById(id);
-        return rows > 0 ? ResponseDto.success(null) : ResponseDto.error("删除订单失败");
     }
 
     /**
@@ -859,25 +633,32 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
      */
     @Override
     public ResponseDto<SeckillResultVO> seckill(SeckillRequest request) {
-        if (request == null || request.getuId() == null || request.getActivityId() == null) {
-            return ResponseDto.error("参数不能为空");
-        }
-        if (request.getAddressId() == null) {
-            return ResponseDto.error("请先维护默认收货地址");
-        }
+        validateSeckillRequest(request);
         // 1. 远程 Redis 原子预扣名额（挡超卖、扛流量，失败不落库）。活动是否有效、是否在时间窗内由 sc-product 判定
         ResponseDto<SeckillActivity> pre =
                 orderFeignService.seckillPreDeduct(request.getActivityId(), request.getuId());
-        if (pre == null || pre.getCode() == null || pre.getCode() != 200) {
+        if (!OrderSupport.isSuccess(pre)) {
             String msg = pre == null ? "秒杀失败" : pre.getMsg();
             // 终态失败，无需轮询
             return ResponseDto.success(new SeckillResultVO("FAILED", msg, null));
         }
         // 2. 预扣成功 → 标记处理中并投递队列，异步落库
         SeckillResultVO pending = new SeckillResultVO("PENDING", "抢购成功，订单处理中", null);
-        saveSeckillResult(request.getuId(), request.getActivityId(), pending);
+        seckillOrderHelper.saveResult(request.getuId(), request.getActivityId(), pending);
         seckillOrderProducer.send(request);
         return ResponseDto.success(pending);
+    }
+
+    /**
+     * 秒杀入参校验，不通过抛业务异常。
+     */
+    private void validateSeckillRequest(SeckillRequest request) {
+        if (request == null || request.getuId() == null || request.getActivityId() == null) {
+            throw new BusinessException("参数不能为空");
+        }
+        if (request.getAddressId() == null) {
+            throw new BusinessException("请先维护默认收货地址");
+        }
     }
 
     /**
@@ -888,8 +669,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         if (uId == null || activityId == null) {
             return new SeckillResultVO("FAILED", "参数不能为空", null);
         }
-        RBucket<SeckillResultVO> bucket = redissonClient.getBucket(SECKILL_RESULT_KEY + uId + ":" + activityId);
-        SeckillResultVO vo = bucket.get();
+        SeckillResultVO vo = seckillOrderHelper.readResult(uId, activityId);
         // 结果已过期或从未发起
         return vo != null ? vo : new SeckillResultVO("NONE", "无秒杀记录", null);
     }
@@ -901,92 +681,6 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     @Override
     @GlobalTransactional
     public void processSeckillOrder(SeckillRequest req) {
-        Integer uId = req.getuId();
-        Integer activityId = req.getActivityId();
-        // 真实库存不足时不归还名额：名额本就是从库存里划出的上限，
-        // 库存已被正常销售抽干说明这批名额是幽灵名额，归还只会让下一个人撞同一堵墙
-        boolean stockShortage = false;
-        try {
-            // 1. 活动快照：秒杀价与商品名都取服务端的，绝不采信请求里的价格
-            ResponseDto<SeckillActivity> actResp = orderFeignService.getSeckillActivity(activityId);
-            if (actResp == null || actResp.getCode() == null || actResp.getCode() != 200
-                    || actResp.getDaoResult() == null) {
-                throw new RuntimeException("秒杀活动不存在");
-            }
-            SeckillActivity activity = JSON.parseObject(
-                    JSON.toJSONString(actResp.getDaoResult()), SeckillActivity.class);
-            if (activity.getSeckillPrice() == null) {
-                throw new RuntimeException("秒杀价缺失");
-            }
-            Integer pId = activity.getPId();
-
-            // 2. 扣真实库存（数量1），条件更新兜底防超卖
-            Product item = new Product();
-            item.setPId(pId);
-            item.setStock(1);
-            ResponseDto<Product> deduct = orderFeignService.checkAndDeductStock(
-                    Collections.singletonList(item));
-            if (deduct == null || deduct.getCode() == null || deduct.getCode() != 200) {
-                stockShortage = true;
-                throw new RuntimeException(deduct == null ? "扣减库存失败" : deduct.getMsg());
-            }
-
-            // 3. 收货地址快照
-            String orderAddress = "";
-            try {
-                ResponseDto<Address> addrResp = userFeignService.getAddress(req.getAddressId());
-                if (addrResp != null && addrResp.getCode() != null && addrResp.getCode() == 200
-                        && addrResp.getDaoResult() != null) {
-                    Address addr = JSON.parseObject(JSON.toJSONString(addrResp.getDaoResult()), Address.class);
-                    orderAddress = buildAddressText(addr);
-                }
-            } catch (Exception e) {
-                log.warn("秒杀拉取收货地址失败 addressId={}, err={}", req.getAddressId(), e.getMessage());
-            }
-
-            // 4. 创建订单，金额为秒杀价
-            Order order = new Order();
-            order.setAddPerson(req.getAddPerson() == null || req.getAddPerson().isEmpty()
-                    ? "anonymous" : req.getAddPerson());
-            order.setUId(uId);
-            order.setCreateTime(new Date());
-            order.setOrderStatus(1);
-            order.setOrderNo(generateOrderNo());
-            order.setOrderAddress(orderAddress);
-            order.setOrderAmount(activity.getSeckillPrice());
-            orderMapper.insert(order);
-
-            // 5. 订单商品明细（数量1）
-            OrderItem oi = new OrderItem();
-            oi.setOId(order.getOId());
-            oi.setPId(pId);
-            oi.setPName(activity.getPName());
-            oi.setQuantity(1);
-            oi.setPrice(activity.getSeckillPrice());
-            orderItemMapper.insert(oi);
-
-            // 6. 成功结果（Redis 写入不受 Seata 回滚影响）
-            saveSeckillResult(uId, activityId, new SeckillResultVO("SUCCESS", "下单成功", order.getOrderNo()));
-        } catch (Exception e) {
-            log.error("[seckill] 落库失败，执行补偿 uId={}, activityId={}", uId, activityId, e);
-            // 补偿：移除已购标记允许重试；名额是否归还取决于失败原因
-            try {
-                orderFeignService.rollbackSeckillStock(activityId, uId, !stockShortage);
-            } catch (Exception ex) {
-                log.error("[seckill] 补偿回滚 Redis 失败 uId={}, activityId={}", uId, activityId, ex);
-            }
-            saveSeckillResult(uId, activityId, new SeckillResultVO("FAILED",
-                    stockShortage ? "商品库存不足，秒杀失败" : "下单失败，请重试", null));
-            // 抛出以触发 Seata 全局回滚（订单/真实库存）
-            throw new RuntimeException("秒杀落库失败: " + e.getMessage(), e);
-        }
-    }
-
-    /**
-     * 将秒杀结果写入 Redis，有效期 1 小时，供前端轮询查询。
-     */
-    private void saveSeckillResult(Integer uId, Integer activityId, SeckillResultVO vo) {
-        RBucket<SeckillResultVO> bucket = redissonClient.getBucket(SECKILL_RESULT_KEY + uId + ":" + activityId);
-        bucket.set(vo, 1, TimeUnit.HOURS);
+        seckillOrderHelper.process(req);
     }
 }

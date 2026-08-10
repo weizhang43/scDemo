@@ -8,6 +8,7 @@ import com.example.scproduct.es.ProductDescEsService;
 import com.example.scproduct.mapper.ProductMapper;
 import com.example.scproduct.service.ProductJobService;
 import com.example.scproduct.service.ProductService;
+import exception.BusinessException;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FileUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,10 +29,10 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
 import java.util.List;
-import java.util.Random;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 import static response.ResponseDto.SUCCESS_CODE;
@@ -83,69 +84,81 @@ public class ProductJobServiceImpl implements ProductJobService {
         long start = System.currentTimeMillis();
 
         long total = productMapper.selectCount(new LambdaQueryWrapper<>());
-        long processed = 0;
-        long updated = 0;
-        long esSynced = 0;
-        Integer lastPId = null;
+        // stats[0]=processed, stats[1]=proDescUpdated, stats[2]=esSynced；传引用以便异常时记录部分进度
+        long[] stats = {0, 0, 0};
 
         ExecutorService executor = Executors.newFixedThreadPool(CONCURRENCY);
         try {
-            while (true) {
-                LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<Product>()
-                        .orderByDesc(Product::getPId)
-                        .last("LIMIT " + PAGE_SIZE);
-                if (lastPId != null) {
-                    wrapper.lt(Product::getPId, lastPId);
-                }
-                List<Product> page = productMapper.selectList(wrapper);
-                if (CollectionUtils.isEmpty(page)) {
-                    break;
-                }
-
-                List<CompletableFuture<Void>> futures = new ArrayList<>(page.size());
-                for (Product product : page) {
-                    futures.add(CompletableFuture.runAsync(() -> fillOneProDesc(product), executor));
-                }
-                try {
-                    CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-                            .get(AWAIT_TIMEOUT_MINUTES, TimeUnit.MINUTES);
-                } catch (Exception e) {
-                    log.error("[fillProDesc] partial batch failure, continuing. lastPId={}", lastPId, e);
-                }
-
-                List<Product> changed = new ArrayList<>(page.size());
-                for (Product p : page) {
-                    if (p.getProDesc() != null) {
-                        changed.add(p);
-                    }
-                }
-                if (!changed.isEmpty()) {
-                    productService.updateBatchById(changed);
-                    updated += changed.size();
-                    // 同步本批到 ES：ES 异常不阻断 AI 填充主流程，仅记录
-                    try {
-                        esSynced += esService.upsertBatch(changed);
-                    } catch (Exception esErr) {
-                        log.warn("[fillProDesc] es sync batch failed, size={}", changed.size(), esErr);
-                    }
-                }
-
-                processed += page.size();
-                lastPId = page.get(page.size() - 1).getPId();
-                if (page.size() < PAGE_SIZE) {
-                    break;
-                }
-            }
-
+            fillProDescLoop(executor, stats);
             String summary = String.format("total=%d, processed=%d, proDescUpdated=%d, esSynced=%d, costMs=%d",
-                    total, processed, updated, esSynced, System.currentTimeMillis() - start);
+                    total, stats[0], stats[1], stats[2], System.currentTimeMillis() - start);
             log.info("[fillProDesc] finish, {}", summary);
             return summary;
         } catch (Exception e) {
-            log.error("[fillProDesc] error, processed={}, updated={}", processed, updated, e);
-            throw new RuntimeException(e);
+            log.error("[fillProDesc] error, processed={}, updated={}", stats[0], stats[1], e);
+            throw new BusinessException("商品描述填充任务执行失败", e);
         } finally {
             executor.shutdown();
+        }
+    }
+
+    /**
+     * 游标分页主循环：逐批并发补描述并落库，累加进度到 stats（processed/updated/esSynced）。
+     */
+    private void fillProDescLoop(ExecutorService executor, long[] stats) {
+        Integer lastPId = null;
+        while (true) {
+            LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<Product>()
+                    .orderByDesc(Product::getPId)
+                    .last("LIMIT " + PAGE_SIZE);
+            if (lastPId != null) {
+                wrapper.lt(Product::getPId, lastPId);
+            }
+            List<Product> page = productMapper.selectList(wrapper);
+            if (CollectionUtils.isEmpty(page)) {
+                break;
+            }
+            processDescBatch(page, executor, lastPId, stats);
+            stats[0] += page.size();
+            lastPId = page.get(page.size() - 1).getPId();
+            if (page.size() < PAGE_SIZE) {
+                break;
+            }
+        }
+    }
+
+    /**
+     * 处理单批商品：并发调 chat 服务补描述，批量写回 MySQL 并同步 ES。
+     * ES 异常不阻断 AI 填充主流程，仅记录。
+     */
+    private void processDescBatch(List<Product> page, ExecutorService executor, Integer lastPId, long[] stats) {
+        List<CompletableFuture<Void>> futures = new ArrayList<>(page.size());
+        for (Product product : page) {
+            futures.add(CompletableFuture.runAsync(() -> fillOneProDesc(product), executor));
+        }
+        try {
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                    .get(AWAIT_TIMEOUT_MINUTES, TimeUnit.MINUTES);
+        } catch (Exception e) {
+            log.error("[fillProDesc] partial batch failure, continuing. lastPId={}", lastPId, e);
+        }
+
+        List<Product> changed = new ArrayList<>(page.size());
+        for (Product p : page) {
+            if (p.getProDesc() != null) {
+                changed.add(p);
+            }
+        }
+        if (changed.isEmpty()) {
+            return;
+        }
+        productService.updateBatchById(changed);
+        stats[1] += changed.size();
+        // 同步本批到 ES：ES 异常不阻断 AI 填充主流程，仅记录
+        try {
+            stats[2] += esService.upsertBatch(changed);
+        } catch (Exception esErr) {
+            log.warn("[fillProDesc] es sync batch failed, size={}", changed.size(), esErr);
         }
     }
 
@@ -177,7 +190,7 @@ public class ProductJobServiceImpl implements ProductJobService {
             return summary;
         } catch (Exception e) {
             log.error("[rebuildProDescIndex] error", e);
-            throw new RuntimeException(e);
+            throw new BusinessException("ES 索引重建任务执行失败", e);
         }
     }
 
@@ -226,70 +239,82 @@ public class ProductJobServiceImpl implements ProductJobService {
 
         long total = productMapper.selectCount(new LambdaQueryWrapper<Product>()
                 .isNull(Product::getImageUrl));
-        long updated = 0;
-        long failed = 0;
-        Integer lastPId = null;
-        Random rand = new Random();
+        // stats[0]=updated, stats[1]=failed；传引用以便异常时记录部分进度
+        long[] stats = {0, 0};
         ExecutorService executor = Executors.newFixedThreadPool(CONCURRENCY);
-
         try {
-            while (true) {
-                LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<Product>()
-                        .isNull(Product::getImageUrl)
-                        .orderByDesc(Product::getPId)
-                        .last("LIMIT " + syncPageSize);
-                if (lastPId != null) {
-                    wrapper.lt(Product::getPId, lastPId);
-                }
-                List<Product> page = productMapper.selectList(wrapper);
-                if (CollectionUtils.isEmpty(page)) {
-                    break;
-                }
-
-                List<CompletableFuture<Boolean>> futures = new ArrayList<>(page.size());
-                for (Product product : page) {
-                    futures.add(CompletableFuture.supplyAsync(() -> uploadAndBind(product, mockFiles, rand), executor));
-                }
-
-                int batchUpdated = 0;
-                int batchFailed = 0;
-                List<Product> changed = new ArrayList<>(page.size());
-                for (int i = 0; i < futures.size(); i++) {
-                    try {
-                        if (Boolean.TRUE.equals(futures.get(i).get(AWAIT_TIMEOUT_MINUTES, TimeUnit.MINUTES))) {
-                            changed.add(page.get(i));
-                            batchUpdated++;
-                        } else {
-                            batchFailed++;
-                        }
-                    } catch (Exception e) {
-                        batchFailed++;
-                        log.error("[dealProductImage] task fail, pId={}", page.get(i).getPId(), e);
-                    }
-                }
-
-                if (!changed.isEmpty()) {
-                    productService.updateBatchById(changed);
-                }
-                updated += batchUpdated;
-                failed += batchFailed;
-
-                // 关键：游标必须推进，无论本批是否有失败，否则失败的行永远卡在第 1 页
-                lastPId = page.get(page.size() - 1).getPId();
-                if (page.size() < syncPageSize) {
-                    break;
-                }
-            }
-
+            bindImagesForAll(mockFiles, executor, stats);
             String summary = String.format("pending=%d, updated=%d, failed=%d, costMs=%d",
-                    total, updated, failed, System.currentTimeMillis() - start);
+                    total, stats[0], stats[1], System.currentTimeMillis() - start);
             log.info("[dealProductImage] finish, {}", summary);
             return summary;
         } catch (Exception e) {
-            log.error("[dealProductImage] error, updated={}, failed={}", updated, failed, e);
-            throw new RuntimeException(e);
+            log.error("[dealProductImage] error, updated={}, failed={}", stats[0], stats[1], e);
+            throw new BusinessException("商品图片绑定任务执行失败", e);
         } finally {
             executor.shutdown();
+        }
+    }
+
+    /**
+     * 游标分页扫描缺图商品并逐批绑定图片，累加进度到 stats（updated/failed）。
+     */
+    private void bindImagesForAll(List<MultipartFile> mockFiles, ExecutorService executor, long[] stats) {
+        Integer lastPId = null;
+        while (true) {
+            LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<Product>()
+                    .isNull(Product::getImageUrl)
+                    .orderByDesc(Product::getPId)
+                    .last("LIMIT " + syncPageSize);
+            if (lastPId != null) {
+                wrapper.lt(Product::getPId, lastPId);
+            }
+            List<Product> page = productMapper.selectList(wrapper);
+            if (CollectionUtils.isEmpty(page)) {
+                break;
+            }
+            processImageBatch(page, mockFiles, executor, stats);
+            // 关键：游标必须推进，无论本批是否有失败，否则失败的行永远卡在第 1 页
+            lastPId = page.get(page.size() - 1).getPId();
+            if (page.size() < syncPageSize) {
+                break;
+            }
+        }
+    }
+
+    /**
+     * 处理单批商品：并发上传图片并收集结果，成功的批量写回 imageUrl。
+     */
+    private void processImageBatch(List<Product> page, List<MultipartFile> mockFiles,
+                                   ExecutorService executor, long[] stats) {
+        List<CompletableFuture<Boolean>> futures = new ArrayList<>(page.size());
+        for (Product product : page) {
+            futures.add(CompletableFuture.supplyAsync(() -> uploadAndBind(product, mockFiles), executor));
+        }
+
+        List<Product> changed = new ArrayList<>(page.size());
+        for (int i = 0; i < futures.size(); i++) {
+            if (awaitBindResult(futures.get(i), page.get(i))) {
+                changed.add(page.get(i));
+                stats[0]++;
+            } else {
+                stats[1]++;
+            }
+        }
+        if (!changed.isEmpty()) {
+            productService.updateBatchById(changed);
+        }
+    }
+
+    /**
+     * 等待单个上传任务完成并返回是否成功；超时或异常记日志计为失败。
+     */
+    private boolean awaitBindResult(CompletableFuture<Boolean> future, Product product) {
+        try {
+            return Boolean.TRUE.equals(future.get(AWAIT_TIMEOUT_MINUTES, TimeUnit.MINUTES));
+        } catch (Exception e) {
+            log.error("[dealProductImage] task fail, pId={}", product.getPId(), e);
+            return false;
         }
     }
 
@@ -297,9 +322,10 @@ public class ProductJobServiceImpl implements ProductJobService {
      * 随机选一张图上传，写回 product.imageUrl。
      * 返回 true 表示成功；返回 false 表示跳过（图片读取失败/上传接口返回非 200）。
      */
-    private boolean uploadAndBind(Product product, List<MultipartFile> mockFiles, Random rand) {
+    private boolean uploadAndBind(Product product, List<MultipartFile> mockFiles) {
         try {
-            MultipartFile file = mockFiles.get(rand.nextInt(mockFiles.size()));
+            // 非安全场景的随机选图，用 ThreadLocalRandom 避免多线程共享 Random 的争用
+            MultipartFile file = mockFiles.get(ThreadLocalRandom.current().nextInt(mockFiles.size()));
             ResponseDto<String> resp = fileController.upload(file);
             if (resp != null && SUCCESS_CODE.equals(resp.getCode()) && resp.getDaoResult() != null) {
                 product.setImageUrl(String.valueOf(resp.getDaoResult()));

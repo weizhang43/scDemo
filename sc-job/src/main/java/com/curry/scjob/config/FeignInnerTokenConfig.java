@@ -16,6 +16,9 @@ public class FeignInnerTokenConfig {
     @Value("${" + AuthConstant.INNER_TOKEN_PROPERTY + ":}")
     private String innerToken;
 
+    /**
+     * 注册 Feign 请求拦截器：配置了内部令牌时，为每次请求附加 X-Inner-Token 请求头。
+     */
     @Bean
     public RequestInterceptor innerTokenRequestInterceptor() {
         return template -> {

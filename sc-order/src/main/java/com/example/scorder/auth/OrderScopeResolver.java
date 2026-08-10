@@ -46,6 +46,9 @@ public final class OrderScopeResolver {
         return OrderScope.unrestricted();
     }
 
+    /**
+     * 解析整数请求头；空白或非法数字一律按缺失处理（返回 null），走最小权限分支。
+     */
     private static Integer parseInt(String raw) {
         if (raw == null || raw.trim().isEmpty()) {
             return null;
@@ -53,6 +56,7 @@ public final class OrderScopeResolver {
         try {
             return Integer.valueOf(raw.trim());
         } catch (NumberFormatException e) {
+            // 头被篡改/非法时按缺失处理（S1166 豁免：NumberFormatException 属可预期解析失败）
             return null;
         }
     }

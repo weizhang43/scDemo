@@ -54,7 +54,9 @@ public class ProductServiceLogAspect {
     }
 
     private String argSummary(Object arg) {
-        if (arg == null) return "null";
+        if (arg == null) {
+            return "null";
+        }
         // HttpServletResponse/HttpServletRequest 等不宜 toString，直接用类名
         String cn = arg.getClass().getName();
         if (cn.contains("HttpServletResponse") || cn.contains("HttpServletRequest")
@@ -65,7 +67,9 @@ public class ProductServiceLogAspect {
     }
 
     private static String summarize(String s) {
-        if (s == null) return "null";
+        if (s == null) {
+            return "null";
+        }
         return s.length() <= MAX_SUMMARY ? s : s.substring(0, MAX_SUMMARY) + "...";
     }
 }

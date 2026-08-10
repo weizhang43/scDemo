@@ -18,12 +18,14 @@ public interface OperationLogService extends IService<OperationLog> {
 
     /**
      * 导出用户日志
-     * @param uName
-     * @param module
-     * @param opType
-     * @param status
-     * @param beginTime
-     * @param endTime
+     * @param uName 用户名（模糊匹配，可空）
+     * @param module 模块（可空）
+     * @param opType 操作类型（可空）
+     * @param status 状态（可空）
+     * @param beginTime 起始时间（可空）
+     * @param endTime 截止时间（可空）
+     * @param response 输出 Excel 的响应对象
      */
-    void export(String uName, String module, String opType, Integer status, String beginTime, String endTime, HttpServletResponse response);
+    void export(String uName, String module, String opType, Integer status,
+                String beginTime, String endTime, HttpServletResponse response);
 }

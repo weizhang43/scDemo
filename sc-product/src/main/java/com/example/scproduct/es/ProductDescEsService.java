@@ -58,12 +58,12 @@ public class ProductDescEsService {
                     ops.putMapping();
                     log.info("[es:ensureIndex] mapping re-applied on existing index");
                 } catch (Exception me) {
-                    log.warn("[es:ensureIndex] putMapping on existing index failed: {}", me.getMessage());
+                    log.warn("[es:ensureIndex] putMapping on existing index failed", me);
                 }
             }
         } catch (Exception e) {
             // ES 未就绪不应阻塞应用启动 —— 查询时再走空结果降级
-            log.warn("[es:ensureIndex] create index skipped, will retry lazily: {}", e.getMessage());
+            log.warn("[es:ensureIndex] create index skipped, will retry lazily", e);
         }
     }
 
@@ -84,7 +84,9 @@ public class ProductDescEsService {
             int nullPidCount = 0;
             for (SearchHit<ProductDescDoc> hit : hits) {
                 ProductDescDoc doc = hit.getContent();
-                if (doc == null) continue;
+                if (doc == null) {
+                    continue;
+                }
                 if (doc.getPId() == null) {
                     nullPidCount++;
                     continue;
@@ -134,7 +136,7 @@ public class ProductDescEsService {
             success = queries.size();
             log.info("[es:upsertBatch] bulk indexed {} docs", success);
         } catch (Exception bulkErr) {
-            log.warn("[es:upsertBatch] bulk failed ({}), fallback to one-by-one", bulkErr.getMessage());
+            log.warn("[es:upsertBatch] bulk failed, fallback to one-by-one", bulkErr);
             for (IndexQuery q : queries) {
                 try {
                     esTemplate.index(q, IndexCoordinates.of("product_desc"));

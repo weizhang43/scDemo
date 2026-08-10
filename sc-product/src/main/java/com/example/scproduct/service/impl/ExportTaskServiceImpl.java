@@ -27,10 +27,30 @@ import java.util.concurrent.TimeUnit;
 @Service
 public class ExportTaskServiceImpl implements ExportTaskService {
 
-    private static final Logger log = LoggerFactory.getLogger(ExportTaskServiceImpl.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(ExportTaskServiceImpl.class);
     private static final String KEY_PREFIX = "export:product:task:";
     private static final long TTL_SECONDS = 3600L;
     private static final long FINAL_TTL_SECONDS = 1800L;
+
+    /** 任务 Hash 字段名 */
+    private static final String F_TASK_ID = "taskId";
+    private static final String F_STATUS = "status";
+    private static final String F_TOTAL = "total";
+    private static final String F_PROCESSED = "processed";
+    private static final String F_PROGRESS = "progress";
+    private static final String F_FILE_NAME = "fileName";
+    private static final String F_FILE_PATH = "filePath";
+    private static final String F_ERROR_MSG = "errorMsg";
+    private static final String F_CREATE_TIME = "createTime";
+    private static final String F_START_TIME = "startTime";
+    private static final String F_FINISH_TIME = "finishTime";
+
+    /** 进度百分比满值 */
+    private static final int PERCENT_FULL = 100;
+    /** 下载文件流拷贝缓冲区大小（字节） */
+    private static final int DOWNLOAD_BUFFER_SIZE = 8192;
+    /** 线程池拒绝时的提示语 */
+    private static final String MSG_EXPORT_BUSY = "导出任务繁忙，请稍后重试";
 
     @Autowired
     private RedissonClient redissonClient;
@@ -57,28 +77,29 @@ public class ExportTaskServiceImpl implements ExportTaskService {
         long now = System.currentTimeMillis();
 
         RMap<String, String> map = redissonClient.getMap(KEY_PREFIX + taskId);
-        map.put("taskId", taskId);
-        map.put("status", ExportTaskStatus.PENDING.name());
-        map.put("total", "0");
-        map.put("processed", "0");
-        map.put("progress", "0");
-        map.put("fileName", "商品列表_" + taskId + ".xlsx");
-        map.put("errorMsg", "");
-        map.put("createTime", String.valueOf(now));
-        map.put("startTime", "0");
-        map.put("finishTime", "0");
+        map.put(F_TASK_ID, taskId);
+        map.put(F_STATUS, ExportTaskStatus.PENDING.name());
+        map.put(F_TOTAL, "0");
+        map.put(F_PROCESSED, "0");
+        map.put(F_PROGRESS, "0");
+        map.put(F_FILE_NAME, "商品列表_" + taskId + ".xlsx");
+        map.put(F_ERROR_MSG, "");
+        map.put(F_CREATE_TIME, String.valueOf(now));
+        map.put(F_START_TIME, "0");
+        map.put(F_FINISH_TIME, "0");
         map.expire(TTL_SECONDS, TimeUnit.SECONDS);
 
         ExportTaskVO vo = toVO(map);
         try {
             exportExecutor.execute(() -> runExport(taskId, query));
         } catch (RejectedExecutionException e) {
-            map.put("status", ExportTaskStatus.FAILED.name());
-            map.put("errorMsg", "导出任务繁忙，请稍后重试");
-            map.put("finishTime", String.valueOf(System.currentTimeMillis()));
+            LOGGER.warn("导出任务提交被拒绝 taskId={}", taskId, e);
+            map.put(F_STATUS, ExportTaskStatus.FAILED.name());
+            map.put(F_ERROR_MSG, MSG_EXPORT_BUSY);
+            map.put(F_FINISH_TIME, String.valueOf(System.currentTimeMillis()));
             map.expire(FINAL_TTL_SECONDS, TimeUnit.SECONDS);
             vo.setStatus(ExportTaskStatus.FAILED.name());
-            vo.setErrorMsg("导出任务繁忙，请稍后重试");
+            vo.setErrorMsg(MSG_EXPORT_BUSY);
             return vo;
         }
         return vo;
@@ -88,8 +109,8 @@ public class ExportTaskServiceImpl implements ExportTaskService {
         String key = KEY_PREFIX + taskId;
         RMap<String, String> map = redissonClient.getMap(key);
         long now = System.currentTimeMillis();
-        map.put("status", ExportTaskStatus.RUNNING.name());
-        map.put("startTime", String.valueOf(now));
+        map.put(F_STATUS, ExportTaskStatus.RUNNING.name());
+        map.put(F_START_TIME, String.valueOf(now));
 
         String dirPath = new File(exportDir).getAbsolutePath();
         File dir = new File(dirPath);
@@ -97,57 +118,55 @@ public class ExportTaskServiceImpl implements ExportTaskService {
             markFailed(map, "无法创建导出目录: " + dirPath);
             return;
         }
-        String fileName = map.get("fileName");
+        String fileName = map.get(F_FILE_NAME);
         File file = new File(dir, fileName);
         String outputPath = file.getAbsolutePath();
 
         try {
-            long[] processedHolder = new long[]{0};
-            long[] totalHolder = new long[]{0};
             long written = productService.exportToPath(
                     query,
                     outputPath,
                     maxRows,
                     pageSize,
                     (processed, total) -> {
-                        processedHolder[0] = processed;
-                        totalHolder[0] = total;
-                        map.put("processed", String.valueOf(processed));
-                        map.put("total", String.valueOf(total));
-                        int progress = total <= 0 ? 0 : (int) Math.min(100, processed * 100 / total);
-                        map.put("progress", String.valueOf(progress));
+                        map.put(F_PROCESSED, String.valueOf(processed));
+                        map.put(F_TOTAL, String.valueOf(total));
+                        int progress = total <= 0 ? 0
+                                : (int) Math.min(PERCENT_FULL, processed * PERCENT_FULL / total);
+                        map.put(F_PROGRESS, String.valueOf(progress));
                     },
-                    () -> ExportTaskStatus.CANCELED.name().equals(map.get("status"))
+                    () -> ExportTaskStatus.CANCELED.name().equals(map.get(F_STATUS))
             );
-            if (ExportTaskStatus.CANCELED.name().equals(map.get("status"))) {
+            if (ExportTaskStatus.CANCELED.name().equals(map.get(F_STATUS))) {
                 file.delete();
                 return;
             }
-            map.put("processed", String.valueOf(written));
-            map.put("progress", "100");
-            map.put("filePath", outputPath);
-            map.put("status", ExportTaskStatus.SUCCESS.name());
-            map.put("finishTime", String.valueOf(System.currentTimeMillis()));
+            map.put(F_PROCESSED, String.valueOf(written));
+            map.put(F_PROGRESS, String.valueOf(PERCENT_FULL));
+            map.put(F_FILE_PATH, outputPath);
+            map.put(F_STATUS, ExportTaskStatus.SUCCESS.name());
+            map.put(F_FINISH_TIME, String.valueOf(System.currentTimeMillis()));
             map.expire(FINAL_TTL_SECONDS, TimeUnit.SECONDS);
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
+            LOGGER.warn("导出任务被中断 taskId={}", taskId, ie);
             file.delete();
-            if (!ExportTaskStatus.CANCELED.name().equals(map.get("status"))) {
-                map.put("status", ExportTaskStatus.CANCELED.name());
-                map.put("finishTime", String.valueOf(System.currentTimeMillis()));
+            if (!ExportTaskStatus.CANCELED.name().equals(map.get(F_STATUS))) {
+                map.put(F_STATUS, ExportTaskStatus.CANCELED.name());
+                map.put(F_FINISH_TIME, String.valueOf(System.currentTimeMillis()));
             }
             map.expire(FINAL_TTL_SECONDS, TimeUnit.SECONDS);
         } catch (Exception e) {
-            log.error("导出任务失败 taskId={}", taskId, e);
+            LOGGER.error("导出任务失败 taskId={}", taskId, e);
             file.delete();
             markFailed(map, e.getMessage());
         }
     }
 
     private void markFailed(RMap<String, String> map, String msg) {
-        map.put("status", ExportTaskStatus.FAILED.name());
-        map.put("errorMsg", msg == null ? "导出失败" : msg);
-        map.put("finishTime", String.valueOf(System.currentTimeMillis()));
+        map.put(F_STATUS, ExportTaskStatus.FAILED.name());
+        map.put(F_ERROR_MSG, msg == null ? "导出失败" : msg);
+        map.put(F_FINISH_TIME, String.valueOf(System.currentTimeMillis()));
         map.expire(FINAL_TTL_SECONDS, TimeUnit.SECONDS);
     }
 
@@ -169,36 +188,25 @@ public class ExportTaskServiceImpl implements ExportTaskService {
         if (!map.isExists()) {
             return null;
         }
-        String current = map.get("status");
+        String current = map.get(F_STATUS);
         // 终态任务不可取消
         if (ExportTaskStatus.SUCCESS.name().equals(current)
                 || ExportTaskStatus.FAILED.name().equals(current)
                 || ExportTaskStatus.CANCELED.name().equals(current)) {
             return toVO(map);
         }
-        map.put("status", ExportTaskStatus.CANCELED.name());
+        map.put(F_STATUS, ExportTaskStatus.CANCELED.name());
         return toVO(map);
     }
 
     @Override
     public boolean download(String taskId, HttpServletResponse response) throws Exception {
         RMap<String, String> map = redissonClient.getMap(KEY_PREFIX + taskId);
-        if (!map.isExists()) {
+        File file = resolveDownloadFile(map);
+        if (file == null) {
             return false;
         }
-        String status = map.get("status");
-        if (!ExportTaskStatus.SUCCESS.name().equals(status)) {
-            return false;
-        }
-        String filePath = map.get("filePath");
-        if (StringUtils.isEmpty(filePath)) {
-            return false;
-        }
-        File file = new File(filePath);
-        if (!file.exists() || !file.isFile()) {
-            return false;
-        }
-        String fileName = map.get("fileName");
+        String fileName = map.get(F_FILE_NAME);
         if (StringUtils.isEmpty(fileName)) {
             fileName = file.getName();
         }
@@ -209,7 +217,7 @@ public class ExportTaskServiceImpl implements ExportTaskService {
         response.setContentLengthLong(file.length());
         try (FileInputStream fis = new FileInputStream(file);
              OutputStream os = response.getOutputStream()) {
-            byte[] buf = new byte[8192];
+            byte[] buf = new byte[DOWNLOAD_BUFFER_SIZE];
             int n;
             while ((n = fis.read(buf)) != -1) {
                 os.write(buf, 0, n);
@@ -219,31 +227,58 @@ public class ExportTaskServiceImpl implements ExportTaskService {
         return true;
     }
 
+    /**
+     * 校验任务可下载并定位导出文件：任务存在、状态为成功且文件在磁盘上，否则返回 null。
+     */
+    private File resolveDownloadFile(RMap<String, String> map) {
+        if (!map.isExists() || !ExportTaskStatus.SUCCESS.name().equals(map.get(F_STATUS))) {
+            return null;
+        }
+        String filePath = map.get(F_FILE_PATH);
+        if (StringUtils.isEmpty(filePath)) {
+            return null;
+        }
+        File file = new File(filePath);
+        return file.exists() && file.isFile() ? file : null;
+    }
+
     private ExportTaskVO toVO(RMap<String, String> map) {
         if (map == null || !map.isExists()) {
             return null;
         }
         ExportTaskVO vo = new ExportTaskVO();
-        vo.setTaskId(map.get("taskId"));
-        vo.setStatus(map.get("status"));
-        vo.setTotal(parseLong(map.get("total")));
-        vo.setProcessed(parseLong(map.get("processed")));
-        vo.setProgress(parseInt(map.get("progress")));
-        vo.setFileName(map.get("fileName"));
-        vo.setErrorMsg(map.get("errorMsg"));
-        vo.setCreateTime(parseLong(map.get("createTime")));
-        vo.setStartTime(parseLong(map.get("startTime")));
-        vo.setFinishTime(parseLong(map.get("finishTime")));
+        vo.setTaskId(map.get(F_TASK_ID));
+        vo.setStatus(map.get(F_STATUS));
+        vo.setTotal(parseLong(map.get(F_TOTAL)));
+        vo.setProcessed(parseLong(map.get(F_PROCESSED)));
+        vo.setProgress(parseInt(map.get(F_PROGRESS)));
+        vo.setFileName(map.get(F_FILE_NAME));
+        vo.setErrorMsg(map.get(F_ERROR_MSG));
+        vo.setCreateTime(parseLong(map.get(F_CREATE_TIME)));
+        vo.setStartTime(parseLong(map.get(F_START_TIME)));
+        vo.setFinishTime(parseLong(map.get(F_FINISH_TIME)));
         return vo;
     }
 
     private long parseLong(String s) {
-        if (s == null || s.isEmpty()) return 0L;
-        try { return Long.parseLong(s); } catch (NumberFormatException e) { return 0L; }
+        if (s == null || s.isEmpty()) {
+            return 0L;
+        }
+        try {
+            return Long.parseLong(s);
+        } catch (NumberFormatException e) {
+            return 0L;
+        }
     }
 
     private int parseInt(String s) {
-        if (s == null || s.isEmpty()) return 0;
-        try { return Integer.parseInt(s); } catch (NumberFormatException e) { return 0; }
+        if (s == null || s.isEmpty()) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(s);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 }

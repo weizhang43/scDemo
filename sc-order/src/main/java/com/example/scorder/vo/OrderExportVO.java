@@ -53,17 +53,37 @@ public class OrderExportVO {
         return vo;
     }
 
+    /** 已完成订单状态码（-1/0/1 为 S109 豁免值，直接写在 case 标签） */
+    private static final int STATUS_COMPLETED = 2;
+
+    /** 未识别状态的兜底文案 */
+    private static final String STATUS_UNKNOWN = "未知";
+
     /**
      * 将订单状态码转换为导出文案：-1 取消 / 0 待付款 / 1 已下单 / 2 已完成，其它为"未知"。
      */
     private static String statusText(Integer s) {
-        if (s == null) return "未知";
-        switch (s) {
-            case -1: return "订单取消";
-            case 0: return "待付款";
-            case 1: return "已下单";
-            case 2: return "已完成";
-            default: return "未知";
+        if (s == null) {
+            return STATUS_UNKNOWN;
         }
+        String text;
+        switch (s) {
+            case -1:
+                text = "订单取消";
+                break;
+            case 0:
+                text = "待付款";
+                break;
+            case 1:
+                text = "已下单";
+                break;
+            case STATUS_COMPLETED:
+                text = "已完成";
+                break;
+            default:
+                text = STATUS_UNKNOWN;
+                break;
+        }
+        return text;
     }
 }

@@ -2,9 +2,10 @@ package com.example.scorder.mq;
 
 import com.example.scorder.dto.SeckillRequest;
 import com.example.scorder.service.OrderService;
-import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RBlockingQueue;
 import org.redisson.api.RedissonClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -16,9 +17,13 @@ import java.util.concurrent.TimeUnit;
  * 秒杀订单消费者（MQ 占位实现）：后台守护线程持续从 Redisson 队列取消息并异步落库。
  * 多节点部署时各节点各起一个消费者，队列天然分发，不会重复消费同一条消息。
  */
-@Slf4j
 @Component
 public class SeckillOrderConsumer {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(SeckillOrderConsumer.class);
+
+    /** 阻塞队列 poll 超时（秒），兼顾停机响应速度与空转开销 */
+    private static final long POLL_TIMEOUT_SECONDS = 2L;
 
     @Autowired
     private RedissonClient redissonClient;
@@ -37,7 +42,7 @@ public class SeckillOrderConsumer {
         worker = new Thread(this::loop, "seckill-order-consumer");
         worker.setDaemon(true);
         worker.start();
-        log.info("[seckill-consumer] started");
+        LOGGER.info("[seckill-consumer] started");
     }
 
     /**
@@ -48,7 +53,7 @@ public class SeckillOrderConsumer {
                 redissonClient.getBlockingQueue(RedissonSeckillOrderProducer.QUEUE_KEY);
         while (running) {
             try {
-                SeckillRequest msg = queue.poll(2, TimeUnit.SECONDS);
+                SeckillRequest msg = queue.poll(POLL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
                 if (msg != null) {
                     orderService.processSeckillOrder(msg);
                 }
@@ -57,10 +62,10 @@ public class SeckillOrderConsumer {
                 break;
             } catch (Exception e) {
                 // 单条消息异常不影响后续消费；补偿在 processSeckillOrder 内部完成
-                log.error("[seckill-consumer] process message error", e);
+                LOGGER.error("[seckill-consumer] process message error", e);
             }
         }
-        log.info("[seckill-consumer] stopped");
+        LOGGER.info("[seckill-consumer] stopped");
     }
 
     /**

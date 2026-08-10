@@ -4,7 +4,8 @@ import com.curry.model.pay.PaySignUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import exception.BusinessException;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
@@ -24,9 +25,13 @@ import java.util.UUID;
  * 模拟支付网关商户客户端：刻意不走 Feign，用 RestTemplate 穿网关 HTTP，
  * 模拟真实第三方支付的外部往返。请求走 HMAC-SHA256 签名（PaySignUtil）。
  */
-@Slf4j
 @Component
 public class MockPayGatewayClient {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(MockPayGatewayClient.class);
+
+    /** 网关响应成功码 */
+    private static final int GATEWAY_SUCCESS_CODE = 200;
 
     @Autowired
     private RestTemplate restTemplate;
@@ -69,7 +74,7 @@ public class MockPayGatewayClient {
             call("/closeTxn", params);
             return true;
         } catch (Exception e) {
-            log.warn("[MockPayGatewayClient] 关单失败 txn={}, err={}", transactionId, e.getMessage());
+            LOGGER.warn("[MockPayGatewayClient] 关单失败 txn={}", transactionId, e);
             return false;
         }
     }
@@ -84,7 +89,7 @@ public class MockPayGatewayClient {
             call("/refund", params);
             return true;
         } catch (Exception e) {
-            log.warn("[MockPayGatewayClient] 退款失败 txn={}, err={}", transactionId, e.getMessage());
+            LOGGER.warn("[MockPayGatewayClient] 退款失败 txn={}", transactionId, e);
             return false;
         }
     }
@@ -109,12 +114,12 @@ public class MockPayGatewayClient {
         try {
             raw = restTemplate.postForObject(baseUrl + path, new HttpEntity<>(form, headers), String.class);
         } catch (Exception e) {
-            log.error("[MockPayGatewayClient] 网关调用失败 path={}, err={}", path, e.getMessage());
-            throw new BusinessException("支付网关暂不可用，请稍后重试");
+            LOGGER.error("[MockPayGatewayClient] 网关调用失败 path={}", path, e);
+            throw new BusinessException("支付网关暂不可用，请稍后重试", e);
         }
         try {
             JsonNode root = objectMapper.readTree(raw);
-            if (root.get("code") == null || root.get("code").asInt() != 200) {
+            if (root.get("code") == null || root.get("code").asInt() != GATEWAY_SUCCESS_CODE) {
                 String msg = root.get("msg") == null ? "未知错误" : root.get("msg").asText();
                 throw new BusinessException("支付网关返回失败：" + msg);
             }
@@ -123,8 +128,8 @@ public class MockPayGatewayClient {
         } catch (BusinessException e) {
             throw e;
         } catch (Exception e) {
-            log.error("[MockPayGatewayClient] 网关响应解析失败 path={}, raw={}", path, raw);
-            throw new BusinessException("支付网关响应异常");
+            LOGGER.error("[MockPayGatewayClient] 网关响应解析失败 path={}, raw={}", path, raw, e);
+            throw new BusinessException("支付网关响应异常", e);
         }
     }
 }

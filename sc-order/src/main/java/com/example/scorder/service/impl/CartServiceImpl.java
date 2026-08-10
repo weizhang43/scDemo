@@ -10,12 +10,13 @@ import com.example.scorder.service.CartService;
 import com.example.scorder.service.OrderFeignService;
 import com.example.scorder.vo.CartItemVO;
 import com.example.scorder.vo.CartMutationVO;
-import lombok.extern.slf4j.Slf4j;
+import exception.BusinessException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import response.ResponseDto;
 
-import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -24,15 +25,25 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+/**
+ * 购物车服务实现：加购（同商品累加并按库存截断）、改数量、列表（实时回源价格库存）、删除与计数。
+ */
 @Service
-@Slf4j
 public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> implements CartService {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(CartServiceImpl.class);
 
     /** 单个用户购物车最多容纳的商品种类数。同时给 listOwn 传给 Feign 的 IN (...) 封顶 */
     private static final int MAX_CART_ROWS = 50;
 
     /** 单个商品的加购数量上限 */
     private static final int MAX_QTY_PER_ITEM = 99;
+
+    /** 商品ID缺失的统一提示 */
+    private static final String MSG_PRODUCT_ID_REQUIRED = "商品ID不能为空";
+
+    /** 实时商品信息回源失败的统一提示 */
+    private static final String MSG_PRODUCT_FETCH_FAILED = "商品信息获取失败，请稍后重试";
 
     @Autowired
     private OrderFeignService orderFeignService;
@@ -49,9 +60,7 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
      */
     @Override
     public ResponseDto<CartMutationVO> addToCart(Integer uId, CartAddRequest req) {
-        if (req == null || req.getPId() == null) {
-            return ResponseDto.error("商品ID不能为空");
-        }
+        requireValidTarget(req);
         Integer pId = req.getPId();
         int qty = (req.getQuantity() == null || req.getQuantity() < 1) ? 1 : req.getQuantity();
 
@@ -80,11 +89,9 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
      */
     @Override
     public ResponseDto<CartMutationVO> updateQuantityOwn(Integer uId, CartAddRequest req) {
-        if (req == null || req.getPId() == null) {
-            return ResponseDto.error("商品ID不能为空");
-        }
+        requireValidTarget(req);
         if (req.getQuantity() == null || req.getQuantity() < 1) {
-            return ResponseDto.error("数量必须大于 0");
+            throw new BusinessException("数量必须大于 0");
         }
         Integer pId = req.getPId();
         int qty = Math.min(req.getQuantity(), MAX_QTY_PER_ITEM);
@@ -105,6 +112,15 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
     }
 
     /**
+     * 加购/改数量的公共入参校验，商品ID缺失抛业务异常。
+     */
+    private void requireValidTarget(CartAddRequest req) {
+        if (req == null || req.getPId() == null) {
+            throw new BusinessException(MSG_PRODUCT_ID_REQUIRED);
+        }
+    }
+
+    /**
      * 购物车列表。价格/库存/上架状态每次都向 sc-product 回源，不读快照 ——
      * effectivePrice 要拿去当下单的 expectedPrice，快照价必然撞「价格已更新」。
      * 因此下游异常时直接报错，不学 listSalesRank 的静默降级：销量榜少个价格只是缺装饰，
@@ -122,20 +138,7 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
 
         List<Integer> pIds = new ArrayList<>(new LinkedHashSet<>(
                 items.stream().map(CartItem::getPId).collect(Collectors.toList())));
-        Map<Integer, Product> sellable = new HashMap<>();
-        try {
-            ResponseDto<Product> prodResp = orderFeignService.listSellableByIds(pIds);
-            if (prodResp == null || prodResp.getCode() == null || prodResp.getCode() != 200
-                    || prodResp.getDataList() == null) {
-                return ResponseDto.error("商品信息获取失败，请稍后重试");
-            }
-            for (Product p : prodResp.getDataList()) {
-                if (p.getPId() != null) sellable.put(p.getPId(), p);
-            }
-        } catch (Exception e) {
-            log.warn("[cart] 拉取商品实时信息失败, uId={}, err={}", uId, e.getMessage());
-            return ResponseDto.error("商品信息获取失败，请稍后重试");
-        }
+        Map<Integer, Product> sellable = fetchSellableMap(uId, pIds);
 
         List<CartItemVO> rows = new ArrayList<>();
         for (CartItem item : items) {
@@ -144,10 +147,36 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
         return ResponseDto.success(rows);
     }
 
+    /**
+     * 批量拉取实时商品并建索引；回源失败或响应异常抛业务异常，不渲染无实时价的购物车。
+     */
+    private Map<Integer, Product> fetchSellableMap(Integer uId, List<Integer> pIds) {
+        ResponseDto<Product> prodResp;
+        try {
+            prodResp = orderFeignService.listSellableByIds(pIds);
+        } catch (Exception e) {
+            LOGGER.warn("[cart] 拉取商品实时信息失败, uId={}", uId, e);
+            throw new BusinessException(MSG_PRODUCT_FETCH_FAILED, e);
+        }
+        if (!OrderSupport.isSuccess(prodResp) || prodResp.getDataList() == null) {
+            throw new BusinessException(MSG_PRODUCT_FETCH_FAILED);
+        }
+        Map<Integer, Product> sellable = new HashMap<>();
+        for (Product p : prodResp.getDataList()) {
+            if (p.getPId() != null) {
+                sellable.put(p.getPId(), p);
+            }
+        }
+        return sellable;
+    }
+
+    /**
+     * 删除购物车单个商品，返回剩余种类数。
+     */
     @Override
     public ResponseDto<Integer> removeOwn(Integer uId, Integer pId) {
         if (pId == null) {
-            return ResponseDto.error("商品ID不能为空");
+            return ResponseDto.error(MSG_PRODUCT_ID_REQUIRED);
         }
         // 归属条件写进 WHERE：越权删除只影响 0 行，不必先查后判
         QueryWrapper<CartItem> wrapper = new QueryWrapper<>();
@@ -156,6 +185,9 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
         return ResponseDto.success(cartItemMapper.countByUser(uId));
     }
 
+    /**
+     * 批量删除购物车商品（下单成功后清车用），返回剩余种类数。
+     */
     @Override
     public ResponseDto<Integer> removeBatchOwn(Integer uId, List<Integer> pIds) {
         if (pIds == null || pIds.isEmpty()) {
@@ -165,6 +197,9 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
         return ResponseDto.success(cartItemMapper.countByUser(uId));
     }
 
+    /**
+     * 购物车商品种类计数（导航栏角标用）。
+     */
     @Override
     public ResponseDto<Integer> countOwn(Integer uId) {
         return ResponseDto.success(cartItemMapper.countByUser(uId));
@@ -177,12 +212,12 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
     private Product fetchSellable(Integer pId) {
         try {
             ResponseDto<Product> resp = orderFeignService.listSellableByIds(Collections.singletonList(pId));
-            if (resp != null && resp.getCode() != null && resp.getCode() == 200
+            if (OrderSupport.isSuccess(resp)
                     && resp.getDataList() != null && !resp.getDataList().isEmpty()) {
                 return resp.getDataList().get(0);
             }
         } catch (Exception e) {
-            log.warn("[cart] 拉取商品失败, pId={}, err={}", pId, e.getMessage());
+            LOGGER.warn("[cart] 拉取商品失败, pId={}", pId, e);
         }
         return null;
     }
@@ -192,12 +227,22 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
      * 让用户在加购入口就被拦住，而不是攒满一车再在结算时整批失败。
      */
     private String rejectReason(Product p, String action) {
-        if (p == null) return "商品已下架或不存在，无法" + action;
-        if (p.getIsExpired() != null && p.getIsExpired() == 1) return "商品已过保质期，无法" + action;
-        if (p.getStock() == null || p.getStock() <= 0) return "商品已售罄，无法" + action;
-        return null;
+        String reason;
+        if (p == null) {
+            reason = "商品已下架或不存在，无法" + action;
+        } else if (p.getIsExpired() != null && p.getIsExpired() == 1) {
+            reason = "商品已过保质期，无法" + action;
+        } else if (p.getStock() == null || p.getStock() <= 0) {
+            reason = "商品已售罄，无法" + action;
+        } else {
+            reason = null;
+        }
+        return reason;
     }
 
+    /**
+     * 组装加购/改数量的返回：最终数量、是否被截断、车内种类数。
+     */
     private CartMutationVO buildMutation(Integer uId, Integer pId, Integer quantity, boolean capped) {
         CartMutationVO vo = new CartMutationVO();
         vo.setPId(pId);
@@ -227,7 +272,7 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
         vo.setImageUrl(p.getImageUrl());
         vo.setPrice(p.getPrice());
         vo.setDiscount(p.getDiscount());
-        vo.setEffectivePrice(effectivePriceOf(p));
+        vo.setEffectivePrice(OrderSupport.effectivePriceOf(p));
         int stock = p.getStock() == null ? 0 : p.getStock();
         vo.setStock(stock);
         if (p.getIsExpired() != null && p.getIsExpired() == 1) {
@@ -244,12 +289,5 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
             }
         }
         return vo;
-    }
-
-    /** 同 OrderServiceImpl#effectivePriceOf：折后价优先，无折扣回落整数原价 */
-    private BigDecimal effectivePriceOf(Product p) {
-        if (p == null) return BigDecimal.ZERO;
-        if (p.getEffectivePrice() != null) return p.getEffectivePrice();
-        return p.getPrice() == null ? BigDecimal.ZERO : BigDecimal.valueOf(p.getPrice());
     }
 }

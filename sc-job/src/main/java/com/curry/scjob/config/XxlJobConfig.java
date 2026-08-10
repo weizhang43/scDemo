@@ -1,14 +1,19 @@
 package com.curry.scjob.config;
 
 import com.xxl.job.core.executor.impl.XxlJobSpringExecutor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-@Slf4j
+/**
+ * XXL-Job 执行器配置：读取 xxl.job.* 配置项并注册执行器到调度中心。
+ */
 @Configuration
 public class XxlJobConfig {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(XxlJobConfig.class);
 
     @Value("${xxl.job.admin.addresses:}")
     private String adminAddresses;
@@ -39,7 +44,7 @@ public class XxlJobConfig {
      */
     @Bean
     public XxlJobSpringExecutor xxlJobExecutor() {
-        log.info(">>>>>>>>>>> xxl-job init: adminAddresses={}, appname={}", adminAddresses, appname);
+        LOGGER.info(">>>>>>>>>>> xxl-job init: adminAddresses={}, appname={}", adminAddresses, appname);
         XxlJobSpringExecutor executor = new XxlJobSpringExecutor();
         executor.setAdminAddresses(adminAddresses);
         executor.setAccessToken(accessToken);

@@ -6,7 +6,6 @@ import com.example.scorder.auth.OrderScope;
 import com.example.scorder.config.OrderTimeoutProperties;
 import com.example.scorder.service.OrderJobService;
 import com.example.scorder.service.OrderService;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,7 +24,6 @@ import static com.example.scorder.service.impl.OrderServiceImpl.UN_COMMIT_ORDER_
 /**
  * 未提交订单超时取消任务：由 sc-job 通过 Feign 触发（/order/job/handleUnSubmitOrder）。
  */
-@Slf4j
 @Service
 public class OrderJobServiceImpl implements OrderJobService {
 
@@ -38,6 +36,10 @@ public class OrderJobServiceImpl implements OrderJobService {
     @Autowired
     @Qualifier("changeStatusExecutor")
     private ThreadPoolTaskExecutor executor;
+
+    /** 发货后超过该天数未确认收货则自动确认 */
+    @Value("${order-auto-confirm-days:7}")
+    private Integer autoConfirmDays;
 
     /**
      * 兜底扫描：MQ 延时取消漏掉的单（消息丢失、死信消费失败等）按 createTime 超时补取消。
@@ -55,10 +57,9 @@ public class OrderJobServiceImpl implements OrderJobService {
         return orderList.size();
     }
 
-    /** 发货后超过该天数未确认收货则自动确认 */
-    @Value("${order-auto-confirm-days:7}")
-    private Integer autoConfirmDays;
-
+    /**
+     * 自动确认收货：已发货(3)且发货时间超过配置天数的订单批量流转到已完成(2)。
+     */
     @Override
     public int autoConfirmReceive() {
         Calendar deadline = Calendar.getInstance();

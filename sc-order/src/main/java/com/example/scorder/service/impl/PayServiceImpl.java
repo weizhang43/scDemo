@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.curry.model.Order;
 import com.curry.model.pay.PaySignUtil;
 import com.example.scorder.auth.OrderScope;
+import com.example.scorder.client.CouponClient;
 import com.example.scorder.client.MockPayGatewayClient;
 import com.example.scorder.entity.PayNotifyLog;
 import com.example.scorder.entity.PayRecord;
@@ -15,11 +16,12 @@ import com.example.scorder.service.PayService;
 import com.example.scorder.vo.PayCreateVO;
 import com.example.scorder.vo.PayStatusVO;
 import exception.BusinessException;
-import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RAtomicLong;
 import org.redisson.api.RBucket;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -39,12 +41,35 @@ import java.util.concurrent.TimeUnit;
 import static com.example.scorder.service.impl.OrderServiceImpl.PLACED_ORDER_STATUS;
 import static com.example.scorder.service.impl.OrderServiceImpl.UN_COMMIT_ORDER_STATUS;
 
-@Slf4j
+/**
+ * 支付服务实现：预下单（幂等复用在途单）、支付网关回调处理（验签/防重放/CAS 状态机）、
+ * 关单与自动退款。回调竞态遵循"谁先 CAS 赢谁"，取消先赢则支付款转自动退款。
+ */
 @Service
 public class PayServiceImpl implements PayService {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(PayServiceImpl.class);
+
+    /** 回调时间戳允许的偏移窗口（5 分钟），超窗视为过期报文 */
     private static final long TIMESTAMP_WINDOW_MS = 5 * 60 * 1000L;
+
+    /** 默认支付渠道 */
     private static final String DEFAULT_CHANNEL = "MOCK";
+
+    /** 预下单分布式锁等待时长（秒） */
+    private static final long PAY_LOCK_WAIT_SECONDS = 3L;
+
+    /** 回调 nonce 防重放的 SETNX 有效期（分钟），需覆盖时间戳窗口 */
+    private static final long NONCE_TTL_MINUTES = 10L;
+
+    /** 回调原始报文落库截断长度，防止超长报文撑爆字段 */
+    private static final int RAW_PARAMS_MAX_LENGTH = 2000;
+
+    /** 支付单号当日自增 key 的保留天数：跨天后旧 key 不再使用，到期自动清理 */
+    private static final int PAY_NO_KEY_EXPIRE_DAYS = 2;
+
+    /** 支付单号流水号格式：至少 4 位，不足补 0 */
+    private static final String PAY_NO_SEQ_PATTERN = "0000";
 
     @Autowired
     private PayRecordMapper payRecordMapper;
@@ -62,7 +87,7 @@ public class PayServiceImpl implements PayService {
     private MockPayGatewayClient gatewayClient;
 
     @Autowired
-    private com.example.scorder.client.CouponClient couponClient;
+    private CouponClient couponClient;
 
     @Autowired
     private TransactionTemplate transactionTemplate;
@@ -70,58 +95,16 @@ public class PayServiceImpl implements PayService {
     @Value("${pay.secret:sc-pay-secret-dev}")
     private String paySecret;
 
+    /**
+     * 创建支付单（预下单）：校验订单可支付 → 加锁防并发 → 幂等复用在途单或新建。
+     * 校验失败抛 BusinessException，由全局异常处理器转为错误响应。
+     */
     @Override
     public ResponseDto<PayCreateVO> createPay(Integer oId, String channel, OrderScope scope) {
-        if (oId == null) {
-            return ResponseDto.error("订单ID不能为空");
-        }
-        Order order = orderMapper.selectById(oId);
-        // 越权与不存在返回同一句提示，避免顾客探测他人订单
-        if (order == null || !scope.canManage(order.getUId())) {
-            return ResponseDto.error("订单不存在");
-        }
-        if (!Objects.equals(order.getOrderStatus(), UN_COMMIT_ORDER_STATUS)) {
-            return ResponseDto.error("订单不是待付款状态");
-        }
-        RLock lock = redissonClient.getLock("lock:pay:create:" + oId);
-        boolean locked;
+        Order order = loadPayableOrder(oId, scope);
+        RLock lock = acquireCreateLock(oId);
         try {
-            // 不指定 leaseTime，走 watchdog 自动续期：锁内有网关外呼，固定租约会在慢调用时提前失效
-            locked = lock.tryLock(3, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return ResponseDto.error("系统繁忙，请稍后重试");
-        }
-        if (!locked) {
-            return ResponseDto.error("操作过于频繁，请稍后重试");
-        }
-        try {
-            // 每订单一张在途单：已有 status=0 的支付单则幂等复用（双击/重进收银台拿同一单）
-            PayRecord exist = payRecordMapper.selectOne(new QueryWrapper<PayRecord>()
-                    .eq("o_id", oId).eq("status", PayRecord.STATUS_PENDING)
-                    .orderByDesc("id").last("LIMIT 1"));
-            if (exist != null) {
-                if (exist.getTransactionId() == null || exist.getTransactionId().isEmpty()) {
-                    // 上次预下单未回填成功：网关按 payNo 幂等，重调补上
-                    backfillTransactionId(exist, order);
-                }
-                return ResponseDto.success(toCreateVO(exist));
-            }
-
-            PayRecord record = new PayRecord();
-            record.setPayNo(generatePayNo());
-            record.setOId(oId);
-            record.setOrderNo(order.getOrderNo());
-            record.setUId(order.getUId());
-            record.setAmount(order.getOrderAmount());
-            record.setChannel(channel == null || channel.isEmpty() ? DEFAULT_CHANNEL : channel);
-            record.setStatus(PayRecord.STATUS_PENDING);
-            record.setCreateTime(new Date());
-            record.setVersion(0);
-            payRecordMapper.insert(record);
-
-            backfillTransactionId(record, order);
-            return ResponseDto.success(toCreateVO(record));
+            return ResponseDto.success(getOrCreatePayRecord(oId, channel, order));
         } finally {
             if (lock.isHeldByCurrentThread()) {
                 lock.unlock();
@@ -129,6 +112,78 @@ public class PayServiceImpl implements PayService {
         }
     }
 
+    /**
+     * 校验订单存在、归属可管且处于待付款状态，任一不满足抛业务异常。
+     * 越权与不存在返回同一句提示，避免顾客探测他人订单。
+     */
+    private Order loadPayableOrder(Integer oId, OrderScope scope) {
+        if (oId == null) {
+            throw new BusinessException("订单ID不能为空");
+        }
+        Order order = orderMapper.selectById(oId);
+        if (order == null || !scope.canManage(order.getUId())) {
+            throw new BusinessException("订单不存在");
+        }
+        if (!Objects.equals(order.getOrderStatus(), UN_COMMIT_ORDER_STATUS)) {
+            throw new BusinessException("订单不是待付款状态");
+        }
+        return order;
+    }
+
+    /**
+     * 获取预下单分布式锁；被中断或抢锁失败抛业务异常。
+     */
+    private RLock acquireCreateLock(Integer oId) {
+        RLock lock = redissonClient.getLock("lock:pay:create:" + oId);
+        boolean locked;
+        try {
+            // 不指定 leaseTime，走 watchdog 自动续期：锁内有网关外呼，固定租约会在慢调用时提前失效
+            locked = lock.tryLock(PAY_LOCK_WAIT_SECONDS, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BusinessException("系统繁忙，请稍后重试");
+        }
+        if (!locked) {
+            throw new BusinessException("操作过于频繁，请稍后重试");
+        }
+        return lock;
+    }
+
+    /**
+     * 每订单一张在途单：已有 status=0 的支付单则幂等复用（双击/重进收银台拿同一单），
+     * 否则新建支付单并向网关预下单回填 transactionId。
+     */
+    private PayCreateVO getOrCreatePayRecord(Integer oId, String channel, Order order) {
+        PayRecord exist = payRecordMapper.selectOne(new QueryWrapper<PayRecord>()
+                .eq("o_id", oId).eq("status", PayRecord.STATUS_PENDING)
+                .orderByDesc("id").last("LIMIT 1"));
+        if (exist != null) {
+            if (exist.getTransactionId() == null || exist.getTransactionId().isEmpty()) {
+                // 上次预下单未回填成功：网关按 payNo 幂等，重调补上
+                backfillTransactionId(exist, order);
+            }
+            return toCreateVO(exist);
+        }
+
+        PayRecord record = new PayRecord();
+        record.setPayNo(generatePayNo());
+        record.setOId(oId);
+        record.setOrderNo(order.getOrderNo());
+        record.setUId(order.getUId());
+        record.setAmount(order.getOrderAmount());
+        record.setChannel(channel == null || channel.isEmpty() ? DEFAULT_CHANNEL : channel);
+        record.setStatus(PayRecord.STATUS_PENDING);
+        record.setCreateTime(new Date());
+        record.setVersion(0);
+        payRecordMapper.insert(record);
+
+        backfillTransactionId(record, order);
+        return toCreateVO(record);
+    }
+
+    /**
+     * 调网关预下单并将 transactionId 回填到支付单。
+     */
     private void backfillTransactionId(PayRecord record, Order order) {
         String transactionId = gatewayClient.precreate(record.getPayNo(), record.getAmount(),
                 "订单 " + order.getOrderNo());
@@ -139,6 +194,9 @@ public class PayServiceImpl implements PayService {
         record.setTransactionId(transactionId);
     }
 
+    /**
+     * 支付单转收银台展示对象。
+     */
     private PayCreateVO toCreateVO(PayRecord record) {
         PayCreateVO vo = new PayCreateVO();
         vo.setPayNo(record.getPayNo());
@@ -148,6 +206,9 @@ public class PayServiceImpl implements PayService {
         return vo;
     }
 
+    /**
+     * 查询支付单状态（前端收银台轮询用），越权与不存在同一句提示。
+     */
     @Override
     public ResponseDto<PayStatusVO> getStatus(String payNo, OrderScope scope) {
         PayRecord record = getByPayNo(payNo);
@@ -167,12 +228,17 @@ public class PayServiceImpl implements PayService {
     private static final class Outcome {
         final boolean ack;
         final String desc;
+
         Outcome(boolean ack, String desc) {
             this.ack = ack;
             this.desc = desc;
         }
     }
 
+    /**
+     * 支付网关回调入口：验签 → 业务处理 → 无条件落回调流水。
+     * 业务校验失败以 BusinessException 上抛，此处统一转为 fail 应答。
+     */
     @Override
     public String handleNotify(Map<String, String> params) {
         boolean signOk = PaySignUtil.verify(params, paySecret);
@@ -185,7 +251,7 @@ public class PayServiceImpl implements PayService {
             } catch (BusinessException e) {
                 outcome = new Outcome(false, e.getMessage());
             } catch (Exception e) {
-                log.error("[PayNotify] 回调处理异常 params={}", params, e);
+                LOGGER.error("[PayNotify] 回调处理异常 params={}", params, e);
                 outcome = new Outcome(false, "处理异常");
             }
         }
@@ -193,41 +259,14 @@ public class PayServiceImpl implements PayService {
         return outcome.ack ? "success" : "fail";
     }
 
+    /**
+     * 回调业务处理：时间戳窗口 → nonce 防重放 → 支付单与金额核验 → 按交易状态分发。
+     * 校验不通过抛 BusinessException（由 handleNotify 转 fail 应答）。
+     */
     private Outcome doHandleNotify(Map<String, String> params) {
-        long ts;
-        try {
-            ts = Long.parseLong(params.get("timestamp"));
-        } catch (Exception e) {
-            return new Outcome(false, "timestamp 非法");
-        }
-        if (Math.abs(System.currentTimeMillis() - ts) > TIMESTAMP_WINDOW_MS) {
-            return new Outcome(false, "回调已过期");
-        }
-        String nonce = params.get("nonce");
-        if (nonce == null || nonce.isEmpty()) {
-            return new Outcome(false, "nonce 缺失");
-        }
-        // SETNX 防重放：原样重发的报文直接拒收；网关正常重试自带新 nonce
-        RBucket<String> nonceBucket = redissonClient.getBucket("pay:nonce:" + nonce);
-        if (!nonceBucket.trySet("1", 10, TimeUnit.MINUTES)) {
-            return new Outcome(false, "nonce 重复，疑似重放");
-        }
-
-        String payNo = params.get("payNo");
-        PayRecord record = getByPayNo(payNo);
-        if (record == null) {
-            return new Outcome(false, "支付单不存在");
-        }
-        BigDecimal amount;
-        try {
-            amount = new BigDecimal(params.get("amount"));
-        } catch (Exception e) {
-            return new Outcome(false, "amount 非法");
-        }
-        if (record.getAmount().compareTo(amount) != 0) {
-            log.warn("[PayNotify] 金额不符 payNo={}, 期望={}, 回调={}", payNo, record.getAmount(), amount);
-            return new Outcome(false, "金额不符");
-        }
+        validateTimestamp(params.get("timestamp"));
+        validateNonce(params.get("nonce"));
+        PayRecord record = loadNotifyRecord(params);
 
         String tradeStatus = params.get("tradeStatus");
         if ("SUCCESS".equals(tradeStatus)) {
@@ -235,10 +274,72 @@ public class PayServiceImpl implements PayService {
         }
         if ("FAIL".equals(tradeStatus)) {
             // 支付失败：支付单 0→2，订单保持待付款可重新发起；rows==0 说明已被推进，幂等确认
-            payRecordMapper.casUpdateStatus(record.getPayNo(), PayRecord.STATUS_PENDING, PayRecord.STATUS_FAIL);
+            payRecordMapper.casUpdateStatus(record.getPayNo(),
+                    PayRecord.STATUS_PENDING, PayRecord.STATUS_FAIL);
             return new Outcome(true, "支付失败已记录");
         }
-        return new Outcome(false, "tradeStatus 非法: " + tradeStatus);
+        throw new BusinessException("tradeStatus 非法: " + tradeStatus);
+    }
+
+    /**
+     * 校验回调时间戳合法且在偏移窗口内，防止过期报文重放。
+     */
+    private void validateTimestamp(String timestampStr) {
+        long ts;
+        try {
+            ts = Long.parseLong(timestampStr);
+        } catch (NumberFormatException e) {
+            // NumberFormatException 属可预期解析失败，转为业务异常无需记录堆栈
+            throw new BusinessException("timestamp 非法");
+        }
+        if (Math.abs(System.currentTimeMillis() - ts) > TIMESTAMP_WINDOW_MS) {
+            throw new BusinessException("回调已过期");
+        }
+    }
+
+    /**
+     * SETNX 防重放：原样重发的报文直接拒收；网关正常重试自带新 nonce。
+     */
+    private void validateNonce(String nonce) {
+        if (nonce == null || nonce.isEmpty()) {
+            throw new BusinessException("nonce 缺失");
+        }
+        RBucket<String> nonceBucket = redissonClient.getBucket("pay:nonce:" + nonce);
+        if (!nonceBucket.trySet("1", NONCE_TTL_MINUTES, TimeUnit.MINUTES)) {
+            throw new BusinessException("nonce 重复，疑似重放");
+        }
+    }
+
+    /**
+     * 按 payNo 加载支付单并核验回调金额与单上金额一致。
+     */
+    private PayRecord loadNotifyRecord(Map<String, String> params) {
+        String payNo = params.get("payNo");
+        PayRecord record = getByPayNo(payNo);
+        if (record == null) {
+            throw new BusinessException("支付单不存在");
+        }
+        BigDecimal amount = parseAmount(params.get("amount"));
+        if (record.getAmount().compareTo(amount) != 0) {
+            LOGGER.warn("[PayNotify] 金额不符 payNo={}, 期望={}, 回调={}", payNo, record.getAmount(), amount);
+            throw new BusinessException("金额不符");
+        }
+        return record;
+    }
+
+    /**
+     * 解析回调金额；null 或非法数字均视为报文非法（new BigDecimal(null) 抛 NPE，须先判空）。
+     */
+    private BigDecimal parseAmount(String amountStr) {
+        if (amountStr == null) {
+            throw new BusinessException("amount 非法");
+        }
+        try {
+            return new BigDecimal(amountStr);
+        } catch (NumberFormatException e) {
+            // NumberFormatException 属可预期解析失败，转为业务异常无需记录堆栈
+            throw new BusinessException("amount 非法");
+        }
     }
 
     /**
@@ -246,51 +347,78 @@ public class PayServiceImpl implements PayService {
      * 竞态谁先 CAS 赢谁：取消先赢 → 支付单转待退款并在提交后调网关退款。
      */
     private Outcome handleSuccess(PayRecord record) {
-        String payNo = record.getPayNo();
-        return transactionTemplate.execute(tx -> {
-            int rows = payRecordMapper.casUpdateStatusPaid(payNo, PayRecord.STATUS_PENDING, PayRecord.STATUS_SUCCESS);
-            if (rows == 0) {
-                PayRecord current = getByPayNo(payNo);
-                if (current.getStatus() == PayRecord.STATUS_SUCCESS
-                        || current.getStatus() == PayRecord.STATUS_REFUNDING
-                        || current.getStatus() == PayRecord.STATUS_REFUNDED) {
-                    return new Outcome(true, "重复回调，忽略");
-                }
-                if (current.getStatus() == PayRecord.STATUS_CLOSED) {
-                    // 订单已超时取消（关单先赢），钱已被扣 → 转自动退款
-                    int r = payRecordMapper.casUpdateStatus(payNo, PayRecord.STATUS_CLOSED, PayRecord.STATUS_REFUNDING);
-                    if (r > 0) {
-                        registerRefundAfterCommit(current);
-                    }
-                    return new Outcome(true, "订单已取消，转自动退款");
-                }
-                return new Outcome(true, "支付单已终态(status=" + current.getStatus() + ")，忽略");
-            }
+        return transactionTemplate.execute(tx -> processPaidInTx(record));
+    }
 
-            // 支付单已推进为成功，尝试推进订单 0→1
-            Order order = orderMapper.selectById(record.getOId());
-            if (order != null && Objects.equals(order.getOrderStatus(), UN_COMMIT_ORDER_STATUS)) {
-                int orderRows = orderMapper.casUpdateStatus(order.getOId(), UN_COMMIT_ORDER_STATUS,
-                        PLACED_ORDER_STATUS, order.getVersion());
-                if (orderRows > 0) {
-                    registerCouponUseAfterCommit(order);
-                    return new Outcome(true, "支付成功，订单已更新为已支付");
-                }
-                order = orderMapper.selectById(record.getOId());
-            }
-            if (order != null && Objects.equals(order.getOrderStatus(), PLACED_ORDER_STATUS)) {
-                return new Outcome(true, "订单已是已支付，忽略");
-            }
-            // 订单被取消抢先（或异常态）：支付单 1→4，提交后调网关退款
-            int r = payRecordMapper.casUpdateStatus(payNo, PayRecord.STATUS_SUCCESS, PayRecord.STATUS_REFUNDING);
+    /**
+     * 事务内推进支付单 0→1：CAS 失败说明状态已被推进，走幂等/竞态分支；成功则继续推进订单。
+     */
+    private Outcome processPaidInTx(PayRecord record) {
+        int rows = payRecordMapper.casUpdateStatusPaid(record.getPayNo(),
+                PayRecord.STATUS_PENDING, PayRecord.STATUS_SUCCESS);
+        if (rows == 0) {
+            return resolveAlreadyAdvanced(record.getPayNo());
+        }
+        return advanceOrderAfterPaid(record);
+    }
+
+    /**
+     * 支付单已不在待支付态时的幂等处理：成功/退款中/已退款直接确认；
+     * 已关单（订单超时取消先赢，钱已被扣）则转自动退款。
+     */
+    private Outcome resolveAlreadyAdvanced(String payNo) {
+        PayRecord current = getByPayNo(payNo);
+        if (current.getStatus() == PayRecord.STATUS_SUCCESS
+                || current.getStatus() == PayRecord.STATUS_REFUNDING
+                || current.getStatus() == PayRecord.STATUS_REFUNDED) {
+            return new Outcome(true, "重复回调，忽略");
+        }
+        if (current.getStatus() == PayRecord.STATUS_CLOSED) {
+            // 订单已超时取消（关单先赢），钱已被扣 → 转自动退款
+            int r = payRecordMapper.casUpdateStatus(payNo,
+                    PayRecord.STATUS_CLOSED, PayRecord.STATUS_REFUNDING);
             if (r > 0) {
-                registerRefundAfterCommit(record);
+                registerRefundAfterCommit(current);
             }
-            Integer orderStatus = order == null ? null : order.getOrderStatus();
-            log.warn("[PayNotify] 订单状态竞态 payNo={}, oId={}, orderStatus={}，支付单转退款",
-                    payNo, record.getOId(), orderStatus);
-            return new Outcome(true, "订单已取消(status=" + orderStatus + ")，支付款转自动退款");
-        });
+            return new Outcome(true, "订单已取消，转自动退款");
+        }
+        return new Outcome(true, "支付单已终态(status=" + current.getStatus() + ")，忽略");
+    }
+
+    /**
+     * 支付单已推进为成功后尝试推进订单 0→1；订单被取消抢先（或异常态）则支付款转自动退款。
+     */
+    private Outcome advanceOrderAfterPaid(PayRecord record) {
+        Order order = orderMapper.selectById(record.getOId());
+        if (order != null && Objects.equals(order.getOrderStatus(), UN_COMMIT_ORDER_STATUS)) {
+            int orderRows = orderMapper.casUpdateStatus(order.getOId(), UN_COMMIT_ORDER_STATUS,
+                    PLACED_ORDER_STATUS, order.getVersion());
+            if (orderRows > 0) {
+                registerCouponUseAfterCommit(order);
+                return new Outcome(true, "支付成功，订单已更新为已支付");
+            }
+            order = orderMapper.selectById(record.getOId());
+        }
+        if (order != null && Objects.equals(order.getOrderStatus(), PLACED_ORDER_STATUS)) {
+            return new Outcome(true, "订单已是已支付，忽略");
+        }
+        return refundOnOrderRace(record, order);
+    }
+
+    /**
+     * 订单取消抢先的竞态兜底：支付单 1→4，提交后调网关退款。
+     */
+    private Outcome refundOnOrderRace(PayRecord record, Order order) {
+        String payNo = record.getPayNo();
+        int r = payRecordMapper.casUpdateStatus(payNo,
+                PayRecord.STATUS_SUCCESS, PayRecord.STATUS_REFUNDING);
+        if (r > 0) {
+            registerRefundAfterCommit(record);
+        }
+        Integer orderStatus = order == null ? null : order.getOrderStatus();
+        LOGGER.warn("[PayNotify] 订单状态竞态 payNo={}, oId={}, orderStatus={}，支付单转退款",
+                payNo, record.getOId(), orderStatus);
+        return new Outcome(true, "订单已取消(status=" + orderStatus + ")，支付款转自动退款");
     }
 
     /**
@@ -306,17 +434,24 @@ public class PayServiceImpl implements PayService {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                try {
-                    ResponseDto<Object> resp = couponClient.use(couponId, oId);
-                    if (resp == null || resp.getCode() == null || resp.getCode() != 200) {
-                        log.warn("[PayNotify] 券核销未成功 couponId={}, oId={}, msg={}",
-                                couponId, oId, resp == null ? null : resp.getMsg());
-                    }
-                } catch (Exception e) {
-                    log.error("[PayNotify] 券核销调用失败 couponId={}, oId={}", couponId, oId, e);
-                }
+                useCouponQuietly(couponId, oId);
             }
         });
+    }
+
+    /**
+     * 调券服务核销，仅记日志不抛错（幂等补核销由网关重试兜底）。
+     */
+    private void useCouponQuietly(Integer couponId, Integer oId) {
+        try {
+            ResponseDto<Object> resp = couponClient.use(couponId, oId);
+            if (!OrderSupport.isSuccess(resp)) {
+                LOGGER.warn("[PayNotify] 券核销未成功 couponId={}, oId={}, msg={}",
+                        couponId, oId, resp == null ? null : resp.getMsg());
+            }
+        } catch (Exception e) {
+            LOGGER.error("[PayNotify] 券核销调用失败 couponId={}, oId={}", couponId, oId, e);
+        }
     }
 
     /**
@@ -329,13 +464,17 @@ public class PayServiceImpl implements PayService {
             @Override
             public void afterCommit() {
                 if (gatewayClient.refund(transactionId)) {
-                    payRecordMapper.casUpdateStatus(payNo, PayRecord.STATUS_REFUNDING, PayRecord.STATUS_REFUNDED);
-                    log.info("[PayNotify] 自动退款完成 payNo={}", payNo);
+                    payRecordMapper.casUpdateStatus(payNo,
+                            PayRecord.STATUS_REFUNDING, PayRecord.STATUS_REFUNDED);
+                    LOGGER.info("[PayNotify] 自动退款完成 payNo={}", payNo);
                 }
             }
         });
     }
 
+    /**
+     * 关闭订单的在途支付单（0→3），供订单取消链路调用；无在途单或 CAS 失败返回 null。
+     */
     @Override
     public PayRecord closePayForOrder(Integer oId) {
         PayRecord pending = payRecordMapper.selectOne(new QueryWrapper<PayRecord>()
@@ -349,6 +488,9 @@ public class PayServiceImpl implements PayService {
         return rows > 0 ? pending : null;
     }
 
+    /**
+     * 按支付单号查询支付单，payNo 为空返回 null。
+     */
     private PayRecord getByPayNo(String payNo) {
         if (payNo == null || payNo.isEmpty()) {
             return null;
@@ -366,13 +508,14 @@ public class PayServiceImpl implements PayService {
             logRow.setTransactionId(params.get("transactionId"));
             logRow.setTradeStatus(params.get("tradeStatus"));
             String raw = JSON.toJSONString(params);
-            logRow.setRawParams(raw.length() > 2000 ? raw.substring(0, 2000) : raw);
+            logRow.setRawParams(raw.length() > RAW_PARAMS_MAX_LENGTH
+                    ? raw.substring(0, RAW_PARAMS_MAX_LENGTH) : raw);
             logRow.setSignOk(signOk ? 1 : 0);
             logRow.setProcessResult(result);
             logRow.setCreateTime(new Date());
             payNotifyLogMapper.insert(logRow);
         } catch (Exception e) {
-            log.error("[PayNotify] 回调流水落库失败", e);
+            LOGGER.error("[PayNotify] 回调流水落库失败", e);
         }
     }
 
@@ -385,9 +528,9 @@ public class PayServiceImpl implements PayService {
         RAtomicLong seqCounter = redissonClient.getAtomicLong("pay:no:seq:" + dayPrefix);
         long seq = seqCounter.incrementAndGet();
         if (seq == 1) {
-            seqCounter.expire(2, TimeUnit.DAYS);
+            seqCounter.expire(PAY_NO_KEY_EXPIRE_DAYS, TimeUnit.DAYS);
         }
-        DecimalFormat df = new DecimalFormat("0000");
+        DecimalFormat df = new DecimalFormat(PAY_NO_SEQ_PATTERN);
         return "PAY" + dayPrefix + df.format(seq);
     }
 }

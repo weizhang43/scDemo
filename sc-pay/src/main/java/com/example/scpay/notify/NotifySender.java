@@ -30,6 +30,10 @@ import java.util.UUID;
 public class NotifySender {
 
     private static final long[] RETRY_DELAYS_MS = {5_000L, 15_000L, 60_000L};
+    /** notify-duplicate 打开时第二发相对首发的延迟（毫秒） */
+    private static final long DUPLICATE_DELAY_OFFSET_MS = 500L;
+    /** 回调结果落库的最大长度，超长截断 */
+    private static final int RESULT_MAX_LEN = 60;
 
     @Autowired
     private ThreadPoolTaskScheduler notifyScheduler;
@@ -52,7 +56,7 @@ public class NotifySender {
         long delay = properties.getNotifyDelayMs();
         schedule(txn, tradeStatus, delay, 0);
         if (properties.isNotifyDuplicate()) {
-            schedule(txn, tradeStatus, delay + 500, 0);
+            schedule(txn, tradeStatus, delay + DUPLICATE_DELAY_OFFSET_MS, 0);
         }
     }
 
@@ -80,14 +84,14 @@ public class NotifySender {
             result = restTemplate.postForObject(txn.getNotifyUrl(),
                     new HttpEntity<>(form, headers), String.class);
         } catch (Exception e) {
-            log.warn("[NotifySender] 回调发送异常 txn={}, attempt={}, err={}",
-                    txn.getTransactionId(), attempt, e.getMessage());
+            log.warn("[NotifySender] 回调发送异常 txn={}, attempt={}",
+                    txn.getTransactionId(), attempt, e);
             result = "error:" + e.getClass().getSimpleName();
         }
 
         String recorded = result == null ? "null" : result;
-        if (recorded.length() > 60) {
-            recorded = recorded.substring(0, 60);
+        if (recorded.length() > RESULT_MAX_LEN) {
+            recorded = recorded.substring(0, RESULT_MAX_LEN);
         }
         txnMapper.recordNotifyResult(txn.getTransactionId(), recorded);
         log.info("[NotifySender] 回调完成 txn={}, tradeStatus={}, attempt={}, resp={}",

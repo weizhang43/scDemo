@@ -38,8 +38,10 @@ public class NoticeController {
     @OpLog(module = "通知管理", type = OpLog.OpType.ADD, description = "新增通知")
     @PostMapping
     public ResponseDto<Notice> add(@RequestBody Notice notice,
-                                   @RequestHeader(value = AuthConstant.HEADER_X_USER_ID, required = false) Integer uId,
-                                   @RequestHeader(value = AuthConstant.HEADER_X_USER_NAME, required = false) String uName) {
+                                   @RequestHeader(value = AuthConstant.HEADER_X_USER_ID, required = false)
+                                   Integer uId,
+                                   @RequestHeader(value = AuthConstant.HEADER_X_USER_NAME, required = false)
+                                   String uName) {
         return noticeService.addNotice(notice, uId, uName);
     }
 

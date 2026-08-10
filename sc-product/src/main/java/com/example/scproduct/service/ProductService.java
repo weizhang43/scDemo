@@ -3,6 +3,7 @@ package com.example.scproduct.service;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.curry.model.Product;
 import com.example.scproduct.auth.AudienceScope;
+import com.example.scproduct.vo.ProductQuery;
 import com.example.scproduct.vo.ProductTypeCountVO;
 import response.ResponseDto;
 
@@ -52,22 +53,11 @@ public interface ProductService extends IService<Product> {
      * 商品描述模糊检索下沉到 ES，ES 不可用时降级回 MySQL LIKE。
      * 结果始终带成交数与评价数。
      *
-     * @param status 1-在售 0-已下架，传 null 不限
-     * @param categoryId 分类过滤；一级分类自动展开为「自身 + 子分类」，传 null 不限
-     * @param sortBy sales-成交数 reviews-评价数 likes-点赞数，其余（含 null）按 id 倒序
+     * @param query 查询条件（status 1-在售 0-已下架 null 不限；categoryId 一级分类自动展开；
+     *              sortBy sales-成交数 reviews-评价数 likes-点赞数，其余按 id 倒序）
+     * @param scope 调用方可见范围
      */
-    ResponseDto<Product> pageQuery(String pName,
-                                   String proDesc,
-                                   Date productionDateStart,
-                                   Date productionDateEnd,
-                                   String origin,
-                                   Integer isExpired,
-                                   Integer status,
-                                   Integer categoryId,
-                                   String sortBy,
-                                   int pageNo,
-                                   int pageSize,
-                                   AudienceScope scope);
+    ResponseDto<Product> pageQuery(ProductQuery query, AudienceScope scope);
 
     /**
      * 新增商品：盖上创建者的 merchant_id，默认上架。
@@ -127,15 +117,12 @@ public interface ProductService extends IService<Product> {
 
     /**
      * 按查询条件导出商品列表为 Excel（EasyExcel）。
+     *
+     * @param query    查询条件（status/categoryId/sortBy/分页字段不参与，沿用旧的「不限上下架」语义）
+     * @param scope    调用方可见范围
+     * @param response HTTP 响应，Excel 直接写出到响应流
      */
-    void export(String pName,
-                String proDesc,
-                Date productionDateStart,
-                Date productionDateEnd,
-                String origin,
-                Integer isExpired,
-                AudienceScope scope,
-                HttpServletResponse response) throws Exception;
+    void export(ProductQuery query, AudienceScope scope, HttpServletResponse response) throws Exception;
 
     /**
      * 流式分页导出到本地文件，供异步线程调用。

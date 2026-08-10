@@ -9,6 +9,7 @@ import com.curry.model.annotation.OpLog;
 import com.curry.model.auth.AuthConstant;
 import com.example.scorder.auth.OrderScopeResolver;
 import com.example.scorder.config.OrderConfig;
+import com.example.scorder.dto.OrderQueryRequest;
 import com.example.scorder.dto.PlaceOrderRequest;
 import com.example.scorder.dto.SeckillRequest;
 import com.example.scorder.service.OrderService;
@@ -16,6 +17,7 @@ import com.example.scorder.vo.SeckillResultVO;
 import com.google.common.collect.Lists;
 import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
@@ -32,6 +34,23 @@ import java.util.concurrent.TimeUnit;
 @RestController
 @RequestMapping(value = "/order")
 public class OrderController {
+
+    /** 销量榜单次查询条数上限 */
+    private static final int MAX_RANK_LIMIT = 50;
+
+    /** 逐日成交趋势查询天数上限 */
+    private static final int MAX_TREND_DAYS = 30;
+
+    /** requestId 幂等键 TTL（秒） */
+    private static final long IDEM_TTL_SECONDS = 30;
+
+    /** 限流兜底订单的演示金额 */
+    private static final BigDecimal MOCK_ORDER_AMOUNT = new BigDecimal(100);
+
+    /** 演示接口拉取商品信息的地址（可配置，默认本地网关直连商品服务） */
+    @Value("${order.demo.product-url:http://localhost:8002/sc-product/product/getProduct}")
+    private String demoProductUrl;
+
     @Autowired
     private OrderConfig orderConfig;
 
@@ -63,7 +82,7 @@ public class OrderController {
             @RequestParam(value = "limit", defaultValue = "10") int limit,
             @RequestHeader(value = AuthConstant.HEADER_X_USER_ID, required = false) Integer uId,
             @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer uType) {
-        return orderService.listSalesRank(Math.min(Math.max(limit, 1), 50), merchantIdOf(uId, uType));
+        return orderService.listSalesRank(Math.min(Math.max(limit, 1), MAX_RANK_LIMIT), merchantIdOf(uId, uType));
     }
 
     /** 首页工作台概览：今日成交额/单量、待发货、待付款、待处理售后。商家按明细口径，管理员按平台实付口径 */
@@ -80,7 +99,7 @@ public class OrderController {
             @RequestParam(value = "days", defaultValue = "7") int days,
             @RequestHeader(value = AuthConstant.HEADER_X_USER_ID, required = false) Integer uId,
             @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer uType) {
-        return orderService.listDailySales(merchantIdOf(uId, uType), Math.min(Math.max(days, 1), 30));
+        return orderService.listDailySales(merchantIdOf(uId, uType), Math.min(Math.max(days, 1), MAX_TREND_DAYS));
     }
 
     /** 统计报表：销量按商品类型分组。商家只统计自己的商品与公共商品，管理员/内部调用查全量 */
@@ -104,19 +123,15 @@ public class OrderController {
         return uType != null && uType == AuthConstant.U_TYPE_MERCHANT ? uId : null;
     }
 
-    /** requestId 幂等键 TTL */
-    private static final long IDEM_TTL_SECONDS = 30;
-
     /**
      * 演示接口：组装一个订单并通过 RestTemplate 直接拉取商品信息塞入 productList 后返回。
      */
     @GetMapping("/getOrder/{id}")
-    public Order getOrderInfo(@PathVariable("id") int id){
+    public Order getOrderInfo(@PathVariable("id") int id) {
         Order order = new Order();
         order.setOId(id);
-        order.setAddPerson("curry"+orderConfig.getOrderType());
-        String productUrl = "http://localhost:8002/sc-product/product/getProduct";
-        Product product = restTemplate.getForEntity(productUrl, Product.class).getBody();
+        order.setAddPerson("curry" + orderConfig.getOrderType());
+        Product product = restTemplate.getForEntity(demoProductUrl, Product.class).getBody();
         order.setProductList(Arrays.asList(product));
         return order;
     }
@@ -132,34 +147,26 @@ public class OrderController {
 
     /**
      * 分页查询订单：支持关键字、订单号、创建时间区间过滤。
+     * 查询条件封装为 OrderQueryRequest 对象绑定（字段名与原参数名一致，前端无需改动）。
      * 被 Sentinel 资源 order-queryOrder 限流，触发限流时走 queryOrderBlockHandler 返回兜底数据。
-     * 方法签名不能变 —— blockHandler 要求参数列表逐一匹配，scope 只能在方法体内解析。
      */
     @GetMapping("/queryOrder")
     @SentinelResource(value = "order-queryOrder",blockHandler = "queryOrderBlockHandler")
-    public ResponseDto<Order> queryOrder(@RequestParam(value = "key", required = false) String key,
-                                         @RequestParam(value = "orderNo", required = false) String orderNo,
-                                         @RequestParam(value = "orderStatus", required = false) Integer orderStatus,
-                                         @RequestParam(value = "createTimeStart", required = false)
-                                         @DateTimeFormat(pattern = "yyyy-MM-dd") Date createTimeStart,
-                                         @RequestParam(value = "createTimeEnd", required = false)
-                                         @DateTimeFormat(pattern = "yyyy-MM-dd") Date createTimeEnd,
-                                         @RequestParam(value = "pageNo", defaultValue = "1") int pageNo,
-                                         @RequestParam(value = "pageSize", defaultValue = "10") int pageSize) {
-        return orderService.queryOrder(key, orderNo, orderStatus, createTimeStart, createTimeEnd, pageNo, pageSize,
-                OrderScopeResolver.current());
+    public ResponseDto<Order> queryOrder(OrderQueryRequest query) {
+        return orderService.queryOrder(query, OrderScopeResolver.current());
     }
 
     /**
      * 统计各订单状态数量（列表状态 Tab 徽标用），过滤条件与 queryOrder 一致但不含状态本身。
      */
     @GetMapping("/statusCount")
-    public ResponseDto<Map<String, Long>> statusCount(@RequestParam(value = "key", required = false) String key,
-                                                      @RequestParam(value = "orderNo", required = false) String orderNo,
-                                                      @RequestParam(value = "createTimeStart", required = false)
-                                                      @DateTimeFormat(pattern = "yyyy-MM-dd") Date createTimeStart,
-                                                      @RequestParam(value = "createTimeEnd", required = false)
-                                                      @DateTimeFormat(pattern = "yyyy-MM-dd") Date createTimeEnd) {
+    public ResponseDto<Map<String, Long>> statusCount(
+            @RequestParam(value = "key", required = false) String key,
+            @RequestParam(value = "orderNo", required = false) String orderNo,
+            @RequestParam(value = "createTimeStart", required = false)
+            @DateTimeFormat(pattern = "yyyy-MM-dd") Date createTimeStart,
+            @RequestParam(value = "createTimeEnd", required = false)
+            @DateTimeFormat(pattern = "yyyy-MM-dd") Date createTimeEnd) {
         return ResponseDto.success(orderService.countByStatus(key, orderNo, createTimeStart, createTimeEnd,
                 OrderScopeResolver.current()));
     }
@@ -168,23 +175,19 @@ public class OrderController {
     /**
      * 兜底方法：参数列表须与原方法一致，末尾追加 BlockException，否则 Sentinel 匹配不到
      */
-    public ResponseDto<Order> queryOrderBlockHandler(String key, String orderNo, Integer orderStatus,
-                                         Date createTimeStart, Date createTimeEnd,
-                                         int pageNo, int pageSize, BlockException ex) {
+    public ResponseDto<Order> queryOrderBlockHandler(OrderQueryRequest query, BlockException ex) {
         Page<Order> page = new Page<>();
-        page.setCurrent(pageNo);
-        page.setSize(pageSize);
+        page.setCurrent(query.getPageNo());
+        page.setSize(query.getPageSize());
         page.setTotal(1);
         Order order = new Order();
         order.setOrderNo("test-order-001");
-        order.setOrderAmount(new BigDecimal(100));
+        order.setOrderAmount(MOCK_ORDER_AMOUNT);
         order.setAddPerson("curry");
         order.setOrderAddress("测试地址");
         order.setCreateTime(new Date());
         page.setRecords(Lists.newArrayList(order));
-
         return ResponseDto.success(page);
-
     }
 
     /**

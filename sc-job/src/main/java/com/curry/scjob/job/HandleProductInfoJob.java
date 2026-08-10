@@ -1,8 +1,10 @@
 package com.curry.scjob.job;
 
+import com.curry.scjob.exception.JobExecuteException;
 import com.curry.scjob.service.ProductLongJobFeignService;
 import com.xxl.job.core.handler.annotation.XxlJob;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import response.ResponseDto;
@@ -16,9 +18,10 @@ import static response.ResponseDto.SUCCESS_CODE;
  * 商品信息处理任务集合：AI 补描述 + ES 同步、ES 全量重建、商品图片绑定。
  * 具体业务逻辑在 sc-product（/product/job/*），本类仅做 XXL-Job 调度触发。
  */
-@Slf4j
 @Component
 public class HandleProductInfoJob {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(HandleProductInfoJob.class);
 
     @Autowired
     private ProductLongJobFeignService productLongJobFeignService;
@@ -31,18 +34,18 @@ public class HandleProductInfoJob {
     @XxlJob("handleProDescJob")
     public void execute() {
         String now = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
-        log.info("[handleProDescJob] start, scanTime={}", now);
+        LOGGER.info("[handleProDescJob] start, scanTime={}", now);
         long start = System.currentTimeMillis();
         try {
             ResponseDto<String> resp = productLongJobFeignService.fillProDesc();
             if (resp == null || !SUCCESS_CODE.equals(resp.getCode())) {
-                throw new RuntimeException("sc-product fillProDesc fail, resp=" + resp);
+                throw new JobExecuteException("sc-product fillProDesc fail, resp=" + resp);
             }
-            log.info("[handleProDescJob] finish, {} costMs={}",
+            LOGGER.info("[handleProDescJob] finish, {} costMs={}",
                     resp.getDaoResult(), System.currentTimeMillis() - start);
         } catch (Exception e) {
-            log.error("[handleProDescJob] error", e);
-            throw new RuntimeException(e);
+            LOGGER.error("[handleProDescJob] error", e);
+            throw new JobExecuteException("handleProDescJob job error", e);
         }
     }
 
@@ -56,13 +59,13 @@ public class HandleProductInfoJob {
         try {
             ResponseDto<String> resp = productLongJobFeignService.rebuildProDescIndex();
             if (resp == null || !SUCCESS_CODE.equals(resp.getCode())) {
-                throw new RuntimeException("sc-product rebuildProDescIndex fail, resp=" + resp);
+                throw new JobExecuteException("sc-product rebuildProDescIndex fail, resp=" + resp);
             }
-            log.info("[rebuildProDescIndexJob] finish, {} costMs={}",
+            LOGGER.info("[rebuildProDescIndexJob] finish, {} costMs={}",
                     resp.getDaoResult(), System.currentTimeMillis() - start);
         } catch (Exception e) {
-            log.error("[rebuildProDescIndexJob] error", e);
-            throw new RuntimeException(e);
+            LOGGER.error("[rebuildProDescIndexJob] error", e);
+            throw new JobExecuteException("rebuildProDescIndexJob job error", e);
         }
     }
 
@@ -73,17 +76,17 @@ public class HandleProductInfoJob {
     @XxlJob("dealProductImage")
     public void dealProductImage() {
         long start = System.currentTimeMillis();
-        log.info("[dealProductImage] start");
+        LOGGER.info("[dealProductImage] start");
         try {
             ResponseDto<String> resp = productLongJobFeignService.dealProductImage();
             if (resp == null || !SUCCESS_CODE.equals(resp.getCode())) {
-                throw new RuntimeException("sc-product dealProductImage fail, resp=" + resp);
+                throw new JobExecuteException("sc-product dealProductImage fail, resp=" + resp);
             }
-            log.info("[dealProductImage] finish, {} costMs={}",
+            LOGGER.info("[dealProductImage] finish, {} costMs={}",
                     resp.getDaoResult(), System.currentTimeMillis() - start);
         } catch (Exception e) {
-            log.error("[dealProductImage] error", e);
-            throw new RuntimeException(e);
+            LOGGER.error("[dealProductImage] error", e);
+            throw new JobExecuteException("dealProductImage job error", e);
         }
     }
 }

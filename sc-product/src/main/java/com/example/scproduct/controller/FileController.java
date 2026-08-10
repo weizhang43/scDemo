@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import exception.BusinessException;
 import response.ResponseDto;
 
 import java.io.File;
@@ -23,10 +24,28 @@ public class FileController {
     @Value("${product.image.dir:./product-images}")
     private String imageDir;
 
+    /**
+     * 上传商品图片：校验非空与扩展名后落盘，返回可访问的相对路径。
+     */
     @PostMapping("/product/image/upload")
     public ResponseDto<String> upload(@RequestParam("file") MultipartFile file) {
+        String ext = validateAndGetExt(file);
+        String fileName = UUID.randomUUID().toString().replace("-", "") + ext;
+        File dir = ensureImageDir();
+        try {
+            file.transferTo(new File(dir, fileName));
+        } catch (IOException e) {
+            throw new BusinessException("图片保存失败：" + e.getMessage(), e);
+        }
+        return ResponseDto.success("/product/image/" + fileName);
+    }
+
+    /**
+     * 校验上传文件非空且为受支持的图片格式，返回小写扩展名（含点）。不合法抛 BusinessException。
+     */
+    private String validateAndGetExt(MultipartFile file) {
         if (file == null || file.isEmpty()) {
-            return ResponseDto.error("请选择图片");
+            throw new BusinessException("请选择图片");
         }
         String original = file.getOriginalFilename();
         String ext = "";
@@ -34,19 +53,20 @@ public class FileController {
             ext = original.substring(original.lastIndexOf('.')).toLowerCase();
         }
         if (!ext.matches("\\.(png|jpg|jpeg|gif|webp)")) {
-            return ResponseDto.error("仅支持 png/jpg/jpeg/gif/webp 格式");
+            throw new BusinessException("仅支持 png/jpg/jpeg/gif/webp 格式");
         }
-        String fileName = UUID.randomUUID().toString().replace("-", "") + ext;
+        return ext;
+    }
+
+    /**
+     * 确保图片目录存在，创建失败抛 BusinessException。
+     */
+    private File ensureImageDir() {
         File dir = new File(imageDir).getAbsoluteFile();
         if (!dir.exists() && !dir.mkdirs()) {
-            return ResponseDto.error("图片目录创建失败");
+            throw new BusinessException("图片目录创建失败");
         }
-        try {
-            file.transferTo(new File(dir, fileName));
-        } catch (IOException e) {
-            return ResponseDto.error("图片保存失败：" + e.getMessage());
-        }
-        return ResponseDto.success("/product/image/" + fileName);
+        return dir;
     }
 
     @GetMapping("/product/image/{fileName:.+}")
@@ -58,11 +78,17 @@ public class FileController {
         if (!file.exists() || !file.isFile()) {
             return ResponseEntity.notFound().build();
         }
-        MediaType type = MediaType.IMAGE_JPEG;
+        MediaType type;
         String name = fileName.toLowerCase();
-        if (name.endsWith(".png")) type = MediaType.IMAGE_PNG;
-        else if (name.endsWith(".gif")) type = MediaType.IMAGE_GIF;
-        else if (name.endsWith(".webp")) type = MediaType.parseMediaType("image/webp");
+        if (name.endsWith(".png")) {
+            type = MediaType.IMAGE_PNG;
+        } else if (name.endsWith(".gif")) {
+            type = MediaType.IMAGE_GIF;
+        } else if (name.endsWith(".webp")) {
+            type = MediaType.parseMediaType("image/webp");
+        } else {
+            type = MediaType.IMAGE_JPEG;
+        }
         return ResponseEntity.ok()
                 .contentType(type)
                 .body(new FileSystemResource(file));

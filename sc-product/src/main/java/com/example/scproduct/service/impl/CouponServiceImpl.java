@@ -10,6 +10,7 @@ import com.example.scproduct.entity.UserCoupon;
 import com.example.scproduct.mapper.CouponTemplateMapper;
 import com.example.scproduct.mapper.UserCouponMapper;
 import com.example.scproduct.service.CouponService;
+import exception.BusinessException;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RBucket;
 import org.redisson.api.RScript;
@@ -54,6 +55,12 @@ public class CouponServiceImpl extends ServiceImpl<CouponTemplateMapper, CouponT
     private static final int TYPE_DISCOUNT = 2;
     /** Redis key 在有效期结束后的保留时长，留足在途补偿时间（同秒杀） */
     private static final long KEY_GRACE_MILLIS = 30 * 60 * 1000L;
+    /** 通用参数缺失提示 */
+    private static final String MSG_PARAM_REQUIRED = "参数不能为空";
+    /** 券余量不足提示 */
+    private static final String MSG_SOLD_OUT = "该券已领完";
+    /** 重复领取提示 */
+    private static final String MSG_ALREADY_CLAIMED = "您已领取过该券";
 
     /**
      * 领券 Lua：原子完成 存在性校验 + 一人一张校验 + 余量扣减 + 记录已领（同秒杀模板）。
@@ -88,25 +95,47 @@ public class CouponServiceImpl extends ServiceImpl<CouponTemplateMapper, CouponT
 
     @Override
     public ResponseDto<CouponTemplate> createTemplate(CouponTemplate template, AudienceScope scope) {
+        validateTemplateBasic(template, scope);
+        validateTemplateBenefit(template);
+        validateTemplateValidity(template);
+        applyMerchantScope(template, scope);
+        template.setId(null);
+        template.setRemainCount(template.getTotalCount());
+        template.setStatus(STATUS_VALID);
+        template.setCreateTime(new Date());
+        templateMapper.insert(template);
+        return ResponseDto.success(null);
+    }
+
+    /**
+     * 校验券模板的基础信息（名称、发券权限、类型、发行量），不合法抛业务异常。
+     */
+    private void validateTemplateBasic(CouponTemplate template, AudienceScope scope) {
         if (template == null || template.getName() == null || template.getName().trim().isEmpty()) {
-            return ResponseDto.error("券名称不能为空");
+            throw new BusinessException("券名称不能为空");
         }
         if (scope.isOnSaleOnly()) {
-            return ResponseDto.error("无权发布优惠券");
+            throw new BusinessException("无权发布优惠券");
         }
         Integer type = template.getType();
         if (type == null || (type != TYPE_OFF && type != TYPE_DISCOUNT)) {
-            return ResponseDto.error("券类型必须是 1(满减) 或 2(折扣)");
+            throw new BusinessException("券类型必须是 1(满减) 或 2(折扣)");
         }
-        if (type == TYPE_OFF) {
+    }
+
+    /**
+     * 校验并规整券的优惠内容：满减校验减免额、折扣校验折扣率，门槛为空时补 0。
+     */
+    private void validateTemplateBenefit(CouponTemplate template) {
+        if (template.getType() == TYPE_OFF) {
             if (template.getOffAmount() == null || template.getOffAmount().compareTo(BigDecimal.ZERO) <= 0) {
-                return ResponseDto.error("满减券的减免金额必须大于 0");
+                throw new BusinessException("满减券的减免金额必须大于 0");
             }
             template.setDiscountRate(null);
         } else {
             BigDecimal rate = template.getDiscountRate();
             if (rate == null || rate.compareTo(BigDecimal.ZERO) <= 0 || rate.compareTo(BigDecimal.ONE) >= 0) {
-                return ResponseDto.error("折扣率必须在 0 到 1 之间（如 0.85 为 85 折）");
+                throw new BusinessException("折扣率必须在 0 到 1 之间（如 0.85 为 85 折）");
             }
             template.setOffAmount(null);
         }
@@ -115,31 +144,36 @@ public class CouponServiceImpl extends ServiceImpl<CouponTemplateMapper, CouponT
             template.setThresholdAmount(BigDecimal.ZERO);
         }
         if (template.getTotalCount() == null || template.getTotalCount() < 1) {
-            return ResponseDto.error("发行总量必须大于 0");
+            throw new BusinessException("发行总量必须大于 0");
         }
+    }
+
+    /**
+     * 校验券模板有效期：起止非空、结束晚于开始且不早于当前时间。
+     */
+    private void validateTemplateValidity(CouponTemplate template) {
         Date start = template.getValidStart();
         Date end = template.getValidEnd();
         if (start == null || end == null) {
-            return ResponseDto.error("有效期起止时间不能为空");
+            throw new BusinessException("有效期起止时间不能为空");
         }
         if (!end.after(start)) {
-            return ResponseDto.error("有效期结束必须晚于开始");
+            throw new BusinessException("有效期结束必须晚于开始");
         }
         if (end.before(new Date())) {
-            return ResponseDto.error("有效期结束不能早于当前时间");
+            throw new BusinessException("有效期结束不能早于当前时间");
         }
-        // 商家只能以自己名义发券；平台券(merchant_id=0)仅管理员/内部可发
+    }
+
+    /**
+     * 商家只能以自己名义发券；平台券(merchant_id=0)仅管理员/内部可发。
+     */
+    private void applyMerchantScope(CouponTemplate template, AudienceScope scope) {
         if (scope.getMerchantId() != null) {
             template.setMerchantId(scope.getMerchantId());
         } else if (template.getMerchantId() == null) {
             template.setMerchantId(0);
         }
-        template.setId(null);
-        template.setRemainCount(template.getTotalCount());
-        template.setStatus(STATUS_VALID);
-        template.setCreateTime(new Date());
-        templateMapper.insert(template);
-        return ResponseDto.success(null);
     }
 
     @Override
@@ -161,14 +195,14 @@ public class CouponServiceImpl extends ServiceImpl<CouponTemplateMapper, CouponT
     @Override
     public ResponseDto<CouponTemplate> disable(Integer id, AudienceScope scope) {
         if (id == null) {
-            return ResponseDto.error("模板ID不能为空");
+            throw new BusinessException("模板ID不能为空");
         }
         CouponTemplate template = templateMapper.selectById(id);
         if (template == null) {
-            return ResponseDto.error("券模板不存在");
+            throw new BusinessException("券模板不存在");
         }
         if (!scope.canManage(template.getMerchantId())) {
-            return ResponseDto.error("无权停用该券");
+            throw new BusinessException("无权停用该券");
         }
         template.setStatus(0);
         templateMapper.updateById(template);
@@ -205,71 +239,101 @@ public class CouponServiceImpl extends ServiceImpl<CouponTemplateMapper, CouponT
     @Override
     public ResponseDto<UserCoupon> claim(Integer templateId, Integer uId) {
         if (templateId == null || uId == null) {
-            return ResponseDto.error("参数不能为空");
+            throw new BusinessException(MSG_PARAM_REQUIRED);
         }
+        CouponTemplate template = checkClaimableTemplate(templateId);
+        Date now = new Date();
+        long ttlMillis = template.getValidEnd().getTime() + KEY_GRACE_MILLIS - now.getTime();
+        seedStockIfAbsent(template, COUPON_STOCK_KEY + templateId, ttlMillis);
+        execClaimLua(templateId, uId, ttlMillis);
+        return persistClaim(templateId, uId, now);
+    }
+
+    /**
+     * 校验券模板可领取：存在、状态有效且未过期，不满足抛业务异常。
+     */
+    private CouponTemplate checkClaimableTemplate(Integer templateId) {
         CouponTemplate template = templateMapper.selectById(templateId);
         if (template == null || template.getStatus() == null || template.getStatus() != STATUS_VALID) {
-            return ResponseDto.error("优惠券不存在或已停用");
+            throw new BusinessException("优惠券不存在或已停用");
         }
-        Date now = new Date();
-        if (template.getValidEnd() != null && template.getValidEnd().before(now)) {
-            return ResponseDto.error("优惠券已过期");
+        if (template.getValidEnd() != null && template.getValidEnd().before(new Date())) {
+            throw new BusinessException("优惠券已过期");
         }
-        long ttlMillis = template.getValidEnd().getTime() + KEY_GRACE_MILLIS - now.getTime();
-        String stockKey = COUPON_STOCK_KEY + templateId;
-        String claimedKey = COUPON_CLAIMED_KEY + templateId;
+        return template;
+    }
 
-        // 懒播种：值取 DB remain_count，SETNX 保证并发下只有首个线程播种成功
+    /**
+     * 懒播种余量 key：值取 DB remain_count，SETNX 保证并发下只有首个线程播种成功。
+     */
+    private void seedStockIfAbsent(CouponTemplate template, String stockKey, long ttlMillis) {
         RBucket<String> stockBucket = redissonClient.getBucket(stockKey, StringCodec.INSTANCE);
-        if (!stockBucket.isExists()) {
-            int remain = template.getRemainCount() == null ? 0 : template.getRemainCount();
-            if (remain < 1) {
-                return ResponseDto.error("该券已领完");
-            }
-            stockBucket.trySet(String.valueOf(remain), ttlMillis, TimeUnit.MILLISECONDS);
+        if (stockBucket.isExists()) {
+            return;
         }
+        int remain = template.getRemainCount() == null ? 0 : template.getRemainCount();
+        if (remain < 1) {
+            throw new BusinessException(MSG_SOLD_OUT);
+        }
+        stockBucket.trySet(String.valueOf(remain), ttlMillis, TimeUnit.MILLISECONDS);
+    }
 
+    /**
+     * 执行领券 Lua 原子预扣，失败按返回码抛对应业务异常。
+     */
+    private void execClaimLua(Integer templateId, Integer uId, long ttlMillis) {
         List<Object> keys = new ArrayList<>();
-        keys.add(stockKey);
-        keys.add(claimedKey);
+        keys.add(COUPON_STOCK_KEY + templateId);
+        keys.add(COUPON_CLAIMED_KEY + templateId);
         Long code = redissonClient.getScript(StringCodec.INSTANCE).eval(
                 RScript.Mode.READ_WRITE, CLAIM_LUA, RScript.ReturnType.INTEGER,
                 keys, String.valueOf(uId), String.valueOf(Math.max(ttlMillis / 1000L, 1L)));
         long r = code == null ? 0L : code;
         if (r == -1L) {
-            return ResponseDto.error("您已领取过该券");
+            throw new BusinessException(MSG_ALREADY_CLAIMED);
         }
         if (r == -2L) {
-            return ResponseDto.error("领券未就绪，请稍后重试");
+            throw new BusinessException("领券未就绪，请稍后重试");
         }
         if (r != 1L) {
-            return ResponseDto.error("该券已领完");
+            throw new BusinessException(MSG_SOLD_OUT);
         }
+    }
 
-        // DB 落库：remain_count 条件扣减兜底，失败一律回滚 Lua 预扣
+    /**
+     * DB 落库：remain_count 条件扣减兜底，失败一律回滚 Lua 预扣。
+     */
+    private ResponseDto<UserCoupon> persistClaim(Integer templateId, Integer uId, Date now) {
         try {
-            int deducted = templateMapper.deductRemain(templateId);
-            if (deducted == 0) {
-                rollbackClaim(templateId, uId, true);
-                return ResponseDto.error("该券已领完");
-            }
-            UserCoupon coupon = new UserCoupon();
-            coupon.setTemplateId(templateId);
-            coupon.setUId(uId);
-            coupon.setStatus(UC_UNUSED);
-            coupon.setClaimTime(now);
-            userCouponMapper.insert(coupon);
-            return ResponseDto.success(coupon);
+            return insertClaimRecord(templateId, uId, now);
         } catch (DuplicateKeyException e) {
             // Redis 已领集合丢失时唯一索引兜底；把 DB 扣掉的余量还回去
             templateMapper.restoreRemain(templateId);
             rollbackClaim(templateId, uId, true);
-            return ResponseDto.error("您已领取过该券");
+            return ResponseDto.error(MSG_ALREADY_CLAIMED);
         } catch (Exception e) {
             log.error("[coupon] 领券落库失败 templateId={}, uId={}", templateId, uId, e);
             rollbackClaim(templateId, uId, true);
             return ResponseDto.error("领券失败，请稍后重试");
         }
+    }
+
+    /**
+     * 扣减 DB 余量并插入用户券记录；余量扣减失败回滚 Redis 预扣并返回领罄。
+     */
+    private ResponseDto<UserCoupon> insertClaimRecord(Integer templateId, Integer uId, Date now) {
+        int deducted = templateMapper.deductRemain(templateId);
+        if (deducted == 0) {
+            rollbackClaim(templateId, uId, true);
+            return ResponseDto.error(MSG_SOLD_OUT);
+        }
+        UserCoupon coupon = new UserCoupon();
+        coupon.setTemplateId(templateId);
+        coupon.setUId(uId);
+        coupon.setStatus(UC_UNUSED);
+        coupon.setClaimTime(now);
+        userCouponMapper.insert(coupon);
+        return ResponseDto.success(coupon);
     }
 
     private void rollbackClaim(Integer templateId, Integer uId, boolean restoreStock) {
@@ -312,7 +376,7 @@ public class CouponServiceImpl extends ServiceImpl<CouponTemplateMapper, CouponT
     @Override
     public ResponseDto<UserCoupon> mine(Integer uId, Integer status) {
         if (uId == null) {
-            return ResponseDto.error("用户ID不能为空");
+            throw new BusinessException("用户ID不能为空");
         }
         return ResponseDto.success(userCouponMapper.selectMine(uId, status));
     }
@@ -320,7 +384,7 @@ public class CouponServiceImpl extends ServiceImpl<CouponTemplateMapper, CouponT
     @Override
     public ResponseDto<UserCoupon> usable(Integer uId, BigDecimal orderAmount) {
         if (uId == null || orderAmount == null || orderAmount.compareTo(BigDecimal.ZERO) <= 0) {
-            return ResponseDto.error("参数不能为空");
+            throw new BusinessException(MSG_PARAM_REQUIRED);
         }
         List<UserCoupon> unused = userCouponMapper.selectMine(uId, UC_UNUSED);
         List<UserCoupon> result = new ArrayList<>();
@@ -338,25 +402,17 @@ public class CouponServiceImpl extends ServiceImpl<CouponTemplateMapper, CouponT
     public ResponseDto<UserCoupon> lock(Integer couponId, Integer uId, BigDecimal orderAmount) {
         if (couponId == null || uId == null || orderAmount == null
                 || orderAmount.compareTo(BigDecimal.ZERO) <= 0) {
-            return ResponseDto.error("参数不能为空");
+            throw new BusinessException(MSG_PARAM_REQUIRED);
         }
         UserCoupon coupon = userCouponMapper.selectDetailById(couponId);
-        if (coupon == null) {
-            return ResponseDto.error("优惠券不存在");
-        }
-        if (!uId.equals(coupon.getUId())) {
-            return ResponseDto.error("该券不属于当前用户");
-        }
-        if (coupon.getStatus() == null || coupon.getStatus() != UC_UNUSED) {
-            return ResponseDto.error("该券已被占用或已使用");
-        }
+        checkLockable(coupon, uId);
         BigDecimal deduction = calcDeduction(coupon, orderAmount);
         if (deduction == null) {
-            return ResponseDto.error("该券不满足使用条件（有效期或使用门槛）");
+            throw new BusinessException("该券不满足使用条件（有效期或使用门槛）");
         }
         int rows = userCouponMapper.casLock(couponId, uId, deduction);
         if (rows == 0) {
-            return ResponseDto.error("该券已被占用，请刷新后重试");
+            throw new BusinessException("该券已被占用，请刷新后重试");
         }
         coupon.setStatus(UC_LOCKED);
         coupon.setCouponAmount(deduction);
@@ -364,40 +420,63 @@ public class CouponServiceImpl extends ServiceImpl<CouponTemplateMapper, CouponT
     }
 
     /**
+     * 校验券可被锁定：存在、归属当前用户且状态为未使用，不满足抛业务异常。
+     */
+    private void checkLockable(UserCoupon coupon, Integer uId) {
+        if (coupon == null) {
+            throw new BusinessException("优惠券不存在");
+        }
+        if (!uId.equals(coupon.getUId())) {
+            throw new BusinessException("该券不属于当前用户");
+        }
+        if (coupon.getStatus() == null || coupon.getStatus() != UC_UNUSED) {
+            throw new BusinessException("该券已被占用或已使用");
+        }
+    }
+
+    /**
      * 抵扣额：满减取 min(减免额, 订单额)；折扣按 (1-折扣率) 对订单额计算，保留 2 位。
      * 不满足有效期或门槛返回 null。
      */
     private BigDecimal calcDeduction(UserCoupon coupon, BigDecimal orderAmount) {
-        Date now = new Date();
-        if (coupon.getValidStart() != null && now.before(coupon.getValidStart())) {
-            return null;
-        }
-        if (coupon.getValidEnd() != null && now.after(coupon.getValidEnd())) {
-            return null;
-        }
-        if (coupon.getThresholdAmount() != null
-                && orderAmount.compareTo(coupon.getThresholdAmount()) < 0) {
+        if (!meetsUseCondition(coupon, orderAmount)) {
             return null;
         }
         Integer type = coupon.getType();
         if (type != null && type == TYPE_DISCOUNT) {
-            if (coupon.getDiscountRate() == null) {
-                return null;
-            }
-            return orderAmount.multiply(BigDecimal.ONE.subtract(coupon.getDiscountRate()))
-                    .setScale(2, RoundingMode.HALF_UP)
-                    .min(orderAmount);
+            return calcDiscountDeduction(coupon, orderAmount);
         }
-        if (coupon.getOffAmount() == null) {
+        return coupon.getOffAmount() == null ? null : coupon.getOffAmount().min(orderAmount);
+    }
+
+    /**
+     * 判断券当前是否在有效期内且订单额达到使用门槛。
+     */
+    private boolean meetsUseCondition(UserCoupon coupon, BigDecimal orderAmount) {
+        Date now = new Date();
+        boolean started = coupon.getValidStart() == null || !now.before(coupon.getValidStart());
+        boolean notExpired = coupon.getValidEnd() == null || !now.after(coupon.getValidEnd());
+        boolean overThreshold = coupon.getThresholdAmount() == null
+                || orderAmount.compareTo(coupon.getThresholdAmount()) >= 0;
+        return started && notExpired && overThreshold;
+    }
+
+    /**
+     * 折扣券抵扣额：按 (1-折扣率) 对订单额计算，保留 2 位，不超过订单额；折扣率缺失返回 null。
+     */
+    private BigDecimal calcDiscountDeduction(UserCoupon coupon, BigDecimal orderAmount) {
+        if (coupon.getDiscountRate() == null) {
             return null;
         }
-        return coupon.getOffAmount().min(orderAmount);
+        return orderAmount.multiply(BigDecimal.ONE.subtract(coupon.getDiscountRate()))
+                .setScale(2, RoundingMode.HALF_UP)
+                .min(orderAmount);
     }
 
     @Override
     public ResponseDto<UserCoupon> use(Integer couponId, Integer oId) {
         if (couponId == null || oId == null) {
-            return ResponseDto.error("参数不能为空");
+            throw new BusinessException(MSG_PARAM_REQUIRED);
         }
         int rows = userCouponMapper.casUse(couponId, oId);
         if (rows > 0) {
@@ -415,7 +494,7 @@ public class CouponServiceImpl extends ServiceImpl<CouponTemplateMapper, CouponT
     @Override
     public ResponseDto<UserCoupon> restore(Integer couponId) {
         if (couponId == null) {
-            return ResponseDto.error("参数不能为空");
+            throw new BusinessException(MSG_PARAM_REQUIRED);
         }
         userCouponMapper.casRestore(couponId);
         return ResponseDto.success(null);

@@ -5,7 +5,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.curry.model.OrderMessage;
 import com.curry.model.User;
 import com.example.scuser.mapper.UserMapper;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.SimpleMailMessage;
@@ -18,9 +19,13 @@ import javax.mail.MessagingException;
 import javax.mail.internet.MimeMessage;
 import java.util.List;
 
+/**
+ * 邮件发送工具：纯文本、HTML 及按用户名反查邮箱发送。
+ */
 @Component
-@Slf4j
 public class MailUtil {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(MailUtil.class);
 
     @Autowired
     private JavaMailSender javaMailSender;
@@ -58,14 +63,18 @@ public class MailUtil {
         javaMailSender.send(message);
     }
 
-    public ResponseDto sendMail(OrderMessage orderMessage) {
+    /**
+     * 按用户名反查邮箱并发送邮件；用户不存在或未维护邮箱时返回错误提示。
+     * @param orderMessage 收件人账号、主题与正文
+     */
+    public ResponseDto<Void> sendMail(OrderMessage orderMessage) {
         try {
             List<User> users = userMapper.selectList(new LambdaQueryWrapper<User>().eq(
                     User::getUName, orderMessage.getToAcc()
             ));
             User user = users.isEmpty() ? null : users.get(0);
             if (user == null || StringUtils.isBlank(user.getEmail())) {
-                return ResponseDto.error("【"+orderMessage.getToAcc()+"】未维护邮箱信息" );
+                return ResponseDto.error("【" + orderMessage.getToAcc() + "】未维护邮箱信息");
             }
 
             SimpleMailMessage mailMessage = new SimpleMailMessage();
@@ -75,7 +84,7 @@ public class MailUtil {
             mailMessage.setText(orderMessage.getMessage());
             javaMailSender.send(mailMessage);
         } catch (Exception e) {
-            log.error("邮件发送失败, toAcc={}", orderMessage.getToAcc(), e);
+            LOGGER.error("邮件发送失败, toAcc={}", orderMessage.getToAcc(), e);
             return ResponseDto.error(e.getMessage());
         }
         return ResponseDto.success();

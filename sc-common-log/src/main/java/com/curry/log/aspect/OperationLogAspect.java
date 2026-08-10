@@ -4,11 +4,12 @@ import com.curry.log.sink.OperationLogSink;
 import com.curry.model.OperationLog;
 import com.curry.model.annotation.OpLog;
 import com.curry.model.auth.AuthConstant;
-import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.reflect.MethodSignature;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -23,11 +24,15 @@ import java.util.stream.Collectors;
  * 再交给独立线程池异步经 OperationLogSink 落地，避免阻塞业务、也不依赖各模块的 @EnableAsync。
  * 落地失败不影响业务；参数/返回值截断，防止大对象撑爆字段。
  */
-@Slf4j
 @Aspect
 public class OperationLogAspect {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(OperationLogAspect.class);
+
+    /** 参数/返回值/错误信息的最大保留长度 */
     private static final int MAX_SUMMARY = 2000;
+    /** 截断后追加的省略号，其长度参与截断位置计算 */
+    private static final String ELLIPSIS = "...";
 
     private final OperationLogSink sink;
     private final Executor executor;
@@ -37,6 +42,9 @@ public class OperationLogAspect {
         this.executor = executor;
     }
 
+    /**
+     * 环绕通知：业务方法正常执行并透传返回值/异常，finally 中同步组装日志实体后异步落地。
+     */
     @Around("@annotation(opLog)")
     public Object around(ProceedingJoinPoint pjp, OpLog opLog) throws Throwable {
         long start = System.currentTimeMillis();
@@ -55,11 +63,14 @@ public class OperationLogAspect {
                         System.currentTimeMillis() - start);
                 executor.execute(() -> sink.save(entity));
             } catch (Exception e) {
-                log.error("[OperationLog] 组装操作日志失败", e);
+                LOGGER.error("[OperationLog] 组装操作日志失败", e);
             }
         }
     }
 
+    /**
+     * 在请求线程同步组装操作日志实体：方法信息、参数摘要、请求上下文、执行结果。
+     */
     private OperationLog build(ProceedingJoinPoint pjp, OpLog opLog, Object ret,
                                Throwable error, long costMs) {
         MethodSignature signature = (MethodSignature) pjp.getSignature();
@@ -97,12 +108,18 @@ public class OperationLogAspect {
         return entity;
     }
 
+    /**
+     * 获取当前线程绑定的 HttpServletRequest，非 Web 上下文返回 null。
+     */
     private HttpServletRequest currentRequest() {
         ServletRequestAttributes attrs =
                 (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
         return attrs == null ? null : attrs.getRequest();
     }
 
+    /**
+     * 解析客户端真实 IP：优先 X-Forwarded-For 首段，其次 X-Real-IP，最后取远端地址。
+     */
     private String clientIp(HttpServletRequest request) {
         String ip = request.getHeader("X-Forwarded-For");
         if (ip != null && !ip.isEmpty() && !"unknown".equalsIgnoreCase(ip)) {
@@ -115,6 +132,9 @@ public class OperationLogAspect {
         return request.getRemoteAddr();
     }
 
+    /**
+     * 生成单个参数的摘要：Servlet/文件类对象只记类型名，其余记截断后的 toString。
+     */
     private String argSummary(Object arg) {
         if (arg == null) {
             return "null";
@@ -127,10 +147,13 @@ public class OperationLogAspect {
         return summarize(arg.toString());
     }
 
+    /**
+     * 截断超长字符串到 MAX_SUMMARY 长度，防止大对象撑爆日志字段。
+     */
     private static String summarize(String s) {
         if (s == null) {
             return null;
         }
-        return s.length() <= MAX_SUMMARY ? s : s.substring(0, MAX_SUMMARY - 3) + "...";
+        return s.length() <= MAX_SUMMARY ? s : s.substring(0, MAX_SUMMARY - ELLIPSIS.length()) + ELLIPSIS;
     }
 }

@@ -11,6 +11,7 @@ import com.example.scproduct.auth.AudienceScope;
 import com.example.scproduct.mapper.ProductMapper;
 import com.example.scproduct.mapper.SeckillActivityMapper;
 import com.example.scproduct.service.SeckillActivityService;
+import exception.BusinessException;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RBucket;
 import org.redisson.api.RScript;
@@ -85,58 +86,10 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
 
     @Override
     public ResponseDto<SeckillActivity> create(SeckillActivity activity, AudienceScope scope) {
-        if (activity == null || activity.getPId() == null) {
-            return ResponseDto.error("商品ID不能为空");
-        }
-        BigDecimal seckillPrice = activity.getSeckillPrice();
-        if (seckillPrice == null || seckillPrice.compareTo(BigDecimal.ZERO) <= 0) {
-            return ResponseDto.error("秒杀价必须大于 0");
-        }
-        Integer seckillStock = activity.getSeckillStock();
-        if (seckillStock == null || seckillStock < 1) {
-            return ResponseDto.error("秒杀名额必须大于 0");
-        }
-        Date start = activity.getStartTime();
-        Date end = activity.getEndTime();
-        if (start == null || end == null) {
-            return ResponseDto.error("活动起止时间不能为空");
-        }
-        if (!end.after(start)) {
-            return ResponseDto.error("结束时间必须晚于开始时间");
-        }
-        if (end.before(new Date())) {
-            return ResponseDto.error("结束时间不能早于当前时间");
-        }
+        validateCreateParams(activity);
         Product product = productMapper.selectById(activity.getPId());
-        if (product == null) {
-            return ResponseDto.error("商品不存在");
-        }
-        if (!scope.canManage(product.getMerchantId())) {
-            return ResponseDto.error("无权为该商品发布秒杀活动");
-        }
-        if (product.getStatus() != null && product.getStatus() != PRODUCT_ON_SALE) {
-            return ResponseDto.error("商品已下架，请先上架再发布秒杀");
-        }
-        if (product.getPrice() != null && seckillPrice.compareTo(BigDecimal.valueOf(product.getPrice())) >= 0) {
-            return ResponseDto.error("秒杀价必须低于原价 " + product.getPrice() + " 元");
-        }
-        // 时间窗重叠即拒绝：同一商品同时多场秒杀，顾客端无法确定该按哪个价格抢
-        long overlap = activityMapper.selectCount(new LambdaQueryWrapper<SeckillActivity>()
-                .eq(SeckillActivity::getPId, activity.getPId())
-                .eq(SeckillActivity::getStatus, STATUS_VALID)
-                .lt(SeckillActivity::getStartTime, end)
-                .gt(SeckillActivity::getEndTime, start));
-        if (overlap > 0) {
-            return ResponseDto.error("该商品在这个时间段已有秒杀活动，请调整时间");
-        }
-        // 名额只是上限、不预扣真实库存，但划出的总量必须有真实库存兜着，
-        // 否则会出现「预扣成功 → 扣真实库存失败」的空转
-        int productStock = product.getStock() == null ? 0 : product.getStock();
-        int reserved = activityMapper.sumReservedStock(activity.getPId(), null);
-        if (reserved + seckillStock > productStock) {
-            return ResponseDto.error("秒杀名额超出可用库存：商品库存 " + productStock
-                    + "，其他进行中活动已划出 " + reserved);
-        }
+        checkProductForSeckill(product, activity, scope);
+        checkNoOverlapAndStock(activity, product);
         activity.setId(null);
         activity.setStatus(STATUS_VALID);
         activity.setCreateTime(new Date());
@@ -144,18 +97,95 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
         return ResponseDto.success(null);
     }
 
+    /**
+     * 校验创建秒杀活动的入参：商品ID、秒杀价、名额与起止时间，不合法抛业务异常。
+     */
+    private void validateCreateParams(SeckillActivity activity) {
+        if (activity == null || activity.getPId() == null) {
+            throw new BusinessException("商品ID不能为空");
+        }
+        BigDecimal seckillPrice = activity.getSeckillPrice();
+        if (seckillPrice == null || seckillPrice.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException("秒杀价必须大于 0");
+        }
+        Integer seckillStock = activity.getSeckillStock();
+        if (seckillStock == null || seckillStock < 1) {
+            throw new BusinessException("秒杀名额必须大于 0");
+        }
+        validateCreateTimeWindow(activity);
+    }
+
+    /**
+     * 校验活动时间窗：起止非空、结束晚于开始且不早于当前时间。
+     */
+    private void validateCreateTimeWindow(SeckillActivity activity) {
+        Date start = activity.getStartTime();
+        Date end = activity.getEndTime();
+        if (start == null || end == null) {
+            throw new BusinessException("活动起止时间不能为空");
+        }
+        if (!end.after(start)) {
+            throw new BusinessException("结束时间必须晚于开始时间");
+        }
+        if (end.before(new Date())) {
+            throw new BusinessException("结束时间不能早于当前时间");
+        }
+    }
+
+    /**
+     * 校验商品可发布秒杀：存在、有管理权限、在售且秒杀价低于原价。
+     */
+    private void checkProductForSeckill(Product product, SeckillActivity activity, AudienceScope scope) {
+        if (product == null) {
+            throw new BusinessException("商品不存在");
+        }
+        if (!scope.canManage(product.getMerchantId())) {
+            throw new BusinessException("无权为该商品发布秒杀活动");
+        }
+        if (product.getStatus() != null && product.getStatus() != PRODUCT_ON_SALE) {
+            throw new BusinessException("商品已下架，请先上架再发布秒杀");
+        }
+        BigDecimal seckillPrice = activity.getSeckillPrice();
+        if (product.getPrice() != null && seckillPrice.compareTo(BigDecimal.valueOf(product.getPrice())) >= 0) {
+            throw new BusinessException("秒杀价必须低于原价 " + product.getPrice() + " 元");
+        }
+    }
+
+    /**
+     * 校验同商品无时间窗重叠的活动，且累计划出名额不超过真实库存。
+     */
+    private void checkNoOverlapAndStock(SeckillActivity activity, Product product) {
+        // 时间窗重叠即拒绝：同一商品同时多场秒杀，顾客端无法确定该按哪个价格抢
+        long overlap = activityMapper.selectCount(new LambdaQueryWrapper<SeckillActivity>()
+                .eq(SeckillActivity::getPId, activity.getPId())
+                .eq(SeckillActivity::getStatus, STATUS_VALID)
+                .lt(SeckillActivity::getStartTime, activity.getEndTime())
+                .gt(SeckillActivity::getEndTime, activity.getStartTime()));
+        if (overlap > 0) {
+            throw new BusinessException("该商品在这个时间段已有秒杀活动，请调整时间");
+        }
+        // 名额只是上限、不预扣真实库存，但划出的总量必须有真实库存兜着，
+        // 否则会出现「预扣成功 → 扣真实库存失败」的空转
+        int productStock = product.getStock() == null ? 0 : product.getStock();
+        int reserved = activityMapper.sumReservedStock(activity.getPId(), null);
+        if (reserved + activity.getSeckillStock() > productStock) {
+            throw new BusinessException("秒杀名额超出可用库存：商品库存 " + productStock
+                    + "，其他进行中活动已划出 " + reserved);
+        }
+    }
+
     @Override
     public ResponseDto<SeckillActivity> cancel(Integer id, AudienceScope scope) {
         if (id == null) {
-            return ResponseDto.error("活动ID不能为空");
+            throw new BusinessException("活动ID不能为空");
         }
         SeckillActivity activity = activityMapper.selectById(id);
         if (activity == null) {
-            return ResponseDto.error("秒杀活动不存在");
+            throw new BusinessException("秒杀活动不存在");
         }
         Product product = productMapper.selectById(activity.getPId());
         if (product != null && !scope.canManage(product.getMerchantId())) {
-            return ResponseDto.error("无权取消该秒杀活动");
+            throw new BusinessException("无权取消该秒杀活动");
         }
         activityMapper.update(null, new LambdaUpdateWrapper<SeckillActivity>()
                 .eq(SeckillActivity::getId, id)
@@ -227,68 +257,94 @@ public class SeckillActivityServiceImpl extends ServiceImpl<SeckillActivityMappe
     @Override
     public ResponseDto<SeckillActivity> preDeduct(Integer activityId, Integer uId) {
         if (activityId == null || uId == null) {
-            return ResponseDto.error("参数不能为空");
+            throw new BusinessException("参数不能为空");
         }
+        SeckillActivity activity = checkDeductibleActivity(activityId);
+        Date now = new Date();
+        long ttlMillis = activity.getEndTime().getTime() + KEY_GRACE_MILLIS - now.getTime();
+        seedStockIfAbsent(activity, SECKILL_STOCK_KEY + activityId, ttlMillis);
+        execSeckillLua(activityId, uId, ttlMillis);
+        return ResponseDto.success(null);
+    }
+
+    /**
+     * 校验活动可参与：存在、状态有效且处于活动时间窗内，不满足抛业务异常。
+     */
+    private SeckillActivity checkDeductibleActivity(Integer activityId) {
         SeckillActivity activity = activityMapper.selectById(activityId);
         if (activity == null || activity.getStatus() == null || activity.getStatus() != STATUS_VALID) {
-            return ResponseDto.error("秒杀活动不存在或已取消");
+            throw new BusinessException("秒杀活动不存在或已取消");
         }
         Date now = new Date();
         if (activity.getStartTime() != null && activity.getStartTime().after(now)) {
-            return ResponseDto.error("秒杀还未开始");
+            throw new BusinessException("秒杀还未开始");
         }
         if (activity.getEndTime() != null && activity.getEndTime().before(now)) {
-            return ResponseDto.error("秒杀已结束");
+            throw new BusinessException("秒杀已结束");
         }
-        long ttlMillis = activity.getEndTime().getTime() + KEY_GRACE_MILLIS - now.getTime();
-        String stockKey = SECKILL_STOCK_KEY + activityId;
-        String boughtKey = SECKILL_BOUGHT_KEY + activityId;
+        return activity;
+    }
 
-        // 懒加载播种：名额取 min(活动名额, 商品当前库存)，避免划出比真实库存还多的幽灵名额
+    /**
+     * 懒加载播种名额 key：名额取 min(活动名额, 商品当前库存)，避免划出比真实库存还多的幽灵名额。
+     * trySet 即 SETNX，并发下只有首个线程播种成功，其余直接进入 Lua。
+     */
+    private void seedStockIfAbsent(SeckillActivity activity, String stockKey, long ttlMillis) {
         RBucket<String> stockBucket = redissonClient.getBucket(stockKey, StringCodec.INSTANCE);
-        if (!stockBucket.isExists()) {
-            Product db = productMapper.selectById(activity.getPId());
-            if (db == null) {
-                return ResponseDto.error("商品不可秒杀：商品不存在");
-            }
-            if (db.getIsExpired() != null && db.getIsExpired() == 1) {
-                return ResponseDto.error("商品不可秒杀：已过期");
-            }
-            if (db.getStatus() != null && db.getStatus() != PRODUCT_ON_SALE) {
-                return ResponseDto.error("商品不可秒杀：已下架");
-            }
-            int productStock = db.getStock() == null ? 0 : db.getStock();
-            int seed = Math.min(activity.getSeckillStock() == null ? 0 : activity.getSeckillStock(), productStock);
-            if (seed < 1) {
-                return ResponseDto.error("已售罄");
-            }
-            // trySet 即 SETNX，并发下只有首个线程播种成功，其余直接进入 Lua
-            stockBucket.trySet(String.valueOf(seed), ttlMillis, TimeUnit.MILLISECONDS);
+        if (stockBucket.isExists()) {
+            return;
         }
+        Product db = productMapper.selectById(activity.getPId());
+        checkProductSeckillable(db);
+        int productStock = db.getStock() == null ? 0 : db.getStock();
+        int seed = Math.min(activity.getSeckillStock() == null ? 0 : activity.getSeckillStock(), productStock);
+        if (seed < 1) {
+            throw new BusinessException("已售罄");
+        }
+        stockBucket.trySet(String.valueOf(seed), ttlMillis, TimeUnit.MILLISECONDS);
+    }
 
+    /**
+     * 校验商品当前可被秒杀：存在、未过期且在售。
+     */
+    private void checkProductSeckillable(Product db) {
+        if (db == null) {
+            throw new BusinessException("商品不可秒杀：商品不存在");
+        }
+        if (db.getIsExpired() != null && db.getIsExpired() == 1) {
+            throw new BusinessException("商品不可秒杀：已过期");
+        }
+        if (db.getStatus() != null && db.getStatus() != PRODUCT_ON_SALE) {
+            throw new BusinessException("商品不可秒杀：已下架");
+        }
+    }
+
+    /**
+     * 执行秒杀 Lua 原子预扣，失败按返回码抛对应业务异常。
+     */
+    private void execSeckillLua(Integer activityId, Integer uId, long ttlMillis) {
         List<Object> keys = new ArrayList<>();
-        keys.add(stockKey);
-        keys.add(boughtKey);
+        keys.add(SECKILL_STOCK_KEY + activityId);
+        keys.add(SECKILL_BOUGHT_KEY + activityId);
         Long code = redissonClient.getScript(StringCodec.INSTANCE).eval(
                 RScript.Mode.READ_WRITE, SECKILL_LUA, RScript.ReturnType.INTEGER,
                 keys, String.valueOf(uId), String.valueOf(Math.max(ttlMillis / 1000L, 1L)));
         long r = code == null ? 0L : code;
-        if (r == 1L) {
-            return ResponseDto.success(null);
-        }
         if (r == -1L) {
-            return ResponseDto.error("您已参与过该场秒杀");
+            throw new BusinessException("您已参与过该场秒杀");
         }
         if (r == -2L) {
-            return ResponseDto.error("秒杀未就绪，请稍后重试");
+            throw new BusinessException("秒杀未就绪，请稍后重试");
         }
-        return ResponseDto.error("已抢完");
+        if (r != 1L) {
+            throw new BusinessException("已抢完");
+        }
     }
 
     @Override
     public ResponseDto<SeckillActivity> rollback(Integer activityId, Integer uId, boolean restoreStock) {
         if (activityId == null || uId == null) {
-            return ResponseDto.error("参数不能为空");
+            throw new BusinessException("参数不能为空");
         }
         List<Object> keys = new ArrayList<>();
         keys.add(SECKILL_STOCK_KEY + activityId);

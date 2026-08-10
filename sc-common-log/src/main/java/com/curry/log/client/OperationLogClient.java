@@ -13,6 +13,11 @@ import org.springframework.web.bind.annotation.RequestBody;
         configuration = LogFeignConfig.class)
 public interface OperationLogClient {
 
+    /**
+     * 调用 sc-user 内部接口保存一条操作日志。
+     *
+     * @param operationLog 待落地的操作日志
+     */
     @PostMapping("/sc-user/user/operationLog/inner/save")
     void save(@RequestBody OperationLog operationLog);
 }

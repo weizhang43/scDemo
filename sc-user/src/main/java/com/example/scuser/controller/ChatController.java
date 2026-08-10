@@ -1,5 +1,8 @@
 package com.example.scuser.controller;
 
+import exception.BusinessException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.HttpEntity;
@@ -32,6 +35,8 @@ import java.nio.charset.StandardCharsets;
 @RestController
 @RequestMapping("/user")
 public class ChatController {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(ChatController.class);
 
     private final RestTemplate restTemplate;
 
@@ -108,7 +113,7 @@ public class ChatController {
             String text = restTemplate.postForObject(url, requestEntity, String.class);
             return ResponseDto.success((Object) (text != null ? text : ""));
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            throw new BusinessException("图片识别失败：读取上传文件出错", e);
         }
     }
     /**
@@ -127,6 +132,7 @@ public class ChatController {
             String imageUrl = restTemplate.getForObject(url, String.class);
             return ResponseDto.success((Object) (imageUrl != null ? imageUrl : ""));
         } catch (Exception e) {
+            LOGGER.warn("[ChatController] 文生图调用失败 url={}", url, e);
             return ResponseDto.error("图片生成失败：" + e.getMessage());
         }
     }

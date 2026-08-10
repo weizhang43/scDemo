@@ -10,6 +10,7 @@ import com.example.scproduct.auth.AudienceScope;
 import com.example.scproduct.mapper.ProductMapper;
 import com.example.scproduct.mapper.ProductPromotionMapper;
 import com.example.scproduct.service.PromotionService;
+import exception.BusinessException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -35,6 +36,15 @@ import java.util.stream.Collectors;
 public class PromotionServiceImpl extends ServiceImpl<ProductPromotionMapper, ProductPromotion>
         implements PromotionService {
 
+    /** 折扣率下限（85 表示 8.5 折） */
+    private static final int DISCOUNT_MIN = 1;
+    /** 折扣率上限 */
+    private static final int DISCOUNT_MAX = 99;
+    /** 折扣率百分比基数 */
+    private static final BigDecimal PERCENT_BASE = BigDecimal.valueOf(100);
+    /** 折后价保留小数位数 */
+    private static final int PRICE_SCALE = 2;
+
     @Autowired
     private ProductPromotionMapper promotionMapper;
 
@@ -43,54 +53,74 @@ public class PromotionServiceImpl extends ServiceImpl<ProductPromotionMapper, Pr
 
     @Override
     public ResponseDto<ProductPromotion> create(ProductPromotion promotion, AudienceScope scope) {
-        if (promotion == null || promotion.getPId() == null) {
-            return ResponseDto.error("商品ID不能为空");
-        }
-        Integer discount = promotion.getDiscount();
-        if (discount == null || discount < 1 || discount > 99) {
-            return ResponseDto.error("折扣率必须在 1-99 之间（如 85 表示 8.5 折）");
-        }
-        Date start = promotion.getStartTime();
-        Date end = promotion.getEndTime();
-        if (start == null || end == null) {
-            return ResponseDto.error("活动起止时间不能为空");
-        }
-        if (!end.after(start)) {
-            return ResponseDto.error("结束时间必须晚于开始时间");
-        }
-        Product product = productMapper.selectById(promotion.getPId());
-        if (product == null) {
-            return ResponseDto.error("商品不存在");
-        }
-        if (!scope.canManage(product.getMerchantId())) {
-            return ResponseDto.error("无权为该商品设置折扣");
-        }
-        // 时间窗重叠即拒绝，从根上消除「同时多个折扣生效、取哪个」的歧义
-        long overlap = promotionMapper.selectCount(new LambdaQueryWrapper<ProductPromotion>()
-                .eq(ProductPromotion::getPId, promotion.getPId())
-                .lt(ProductPromotion::getStartTime, end)
-                .gt(ProductPromotion::getEndTime, start));
-        if (overlap > 0) {
-            return ResponseDto.error("该商品在这个时间段已有折扣活动，请调整时间");
-        }
+        validateCreateParams(promotion);
+        checkProductManageable(promotion, scope);
+        checkNoOverlap(promotion);
         promotion.setId(null);
         promotion.setCreateTime(new Date());
         promotionMapper.insert(promotion);
         return ResponseDto.success(null);
     }
 
+    /**
+     * 创建折扣活动的基础参数校验：商品ID、折扣区间、起止时间。不合法抛 BusinessException。
+     */
+    private void validateCreateParams(ProductPromotion promotion) {
+        if (promotion == null || promotion.getPId() == null) {
+            throw new BusinessException("商品ID不能为空");
+        }
+        Integer discount = promotion.getDiscount();
+        if (discount == null || discount < DISCOUNT_MIN || discount > DISCOUNT_MAX) {
+            throw new BusinessException("折扣率必须在 1-99 之间（如 85 表示 8.5 折）");
+        }
+        Date start = promotion.getStartTime();
+        Date end = promotion.getEndTime();
+        if (start == null || end == null) {
+            throw new BusinessException("活动起止时间不能为空");
+        }
+        if (!end.after(start)) {
+            throw new BusinessException("结束时间必须晚于开始时间");
+        }
+    }
+
+    /**
+     * 校验商品存在且当前身份有权管理，否则抛 BusinessException。
+     */
+    private void checkProductManageable(ProductPromotion promotion, AudienceScope scope) {
+        Product product = productMapper.selectById(promotion.getPId());
+        if (product == null) {
+            throw new BusinessException("商品不存在");
+        }
+        if (!scope.canManage(product.getMerchantId())) {
+            throw new BusinessException("无权为该商品设置折扣");
+        }
+    }
+
+    /**
+     * 时间窗重叠即拒绝，从根上消除「同时多个折扣生效、取哪个」的歧义。重叠抛 BusinessException。
+     */
+    private void checkNoOverlap(ProductPromotion promotion) {
+        long overlap = promotionMapper.selectCount(new LambdaQueryWrapper<ProductPromotion>()
+                .eq(ProductPromotion::getPId, promotion.getPId())
+                .lt(ProductPromotion::getStartTime, promotion.getEndTime())
+                .gt(ProductPromotion::getEndTime, promotion.getStartTime()));
+        if (overlap > 0) {
+            throw new BusinessException("该商品在这个时间段已有折扣活动，请调整时间");
+        }
+    }
+
     @Override
     public ResponseDto<ProductPromotion> cancel(Integer id, AudienceScope scope) {
         if (id == null) {
-            return ResponseDto.error("活动ID不能为空");
+            throw new BusinessException("活动ID不能为空");
         }
         ProductPromotion promotion = promotionMapper.selectById(id);
         if (promotion == null) {
-            return ResponseDto.error("折扣活动不存在");
+            throw new BusinessException("折扣活动不存在");
         }
         Product product = productMapper.selectById(promotion.getPId());
         if (product != null && !scope.canManage(product.getMerchantId())) {
-            return ResponseDto.error("无权取消该折扣活动");
+            throw new BusinessException("无权取消该折扣活动");
         }
         promotionMapper.deleteById(id);
         return ResponseDto.success(null);
@@ -167,6 +197,6 @@ public class PromotionServiceImpl extends ServiceImpl<ProductPromotionMapper, Pr
     private static BigDecimal discountedPrice(Integer price, Integer discount) {
         return BigDecimal.valueOf(price)
                 .multiply(BigDecimal.valueOf(discount))
-                .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+                .divide(PERCENT_BASE, PRICE_SCALE, RoundingMode.HALF_UP);
     }
 }

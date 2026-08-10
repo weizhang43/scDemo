@@ -5,26 +5,35 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.curry.model.User;
+import com.curry.model.auth.AuthConstant;
 import com.example.scuser.dto.RegisterRequest;
 import com.example.scuser.mapper.UserMapper;
 import com.example.scuser.service.UserService;
 import com.example.scuser.util.MailUtil;
 import com.example.scuser.vo.UserExportVO;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import response.ResponseDto;
 
 import javax.servlet.http.HttpServletResponse;
 import java.net.URLEncoder;
+import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
+/**
+ * 用户核心服务：注册、登录、验证码、资料维护、统计与导出。
+ */
 @Service
 public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements UserService {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(UserServiceImpl.class);
 
     private static final long CODE_TTL_MS = 5 * 60 * 1000L;
 
@@ -33,6 +42,12 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
     /** 同一邮箱的最短重发间隔，与前端 60s 倒计时保持一致 */
     private static final long RESEND_INTERVAL_MS = 60 * 1000L;
+
+    /** 6 位数字验证码的取值上界（不含） */
+    private static final int CODE_BOUND = 1000000;
+
+    /** 验证码使用安全随机数，避免被预测（S2245） */
+    private static final SecureRandom RANDOM = new SecureRandom();
 
     private static final Pattern EMAIL_PATTERN =
             Pattern.compile("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$");
@@ -51,43 +66,84 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             return ResponseDto.error("请求参数不能为空");
         }
         User user = request.toUser();
-        if (user.getUName() == null || user.getUName().trim().isEmpty()) {
-            return ResponseDto.error("用户名不能为空");
+        String error = validateRegisterUser(user);
+        if (error != null) {
+            return ResponseDto.error(error);
         }
-        if (user.getPassword() == null || user.getPassword().trim().isEmpty()) {
-            return ResponseDto.error("密码不能为空");
+        return doRegister(user, request.getEmailCode());
+    }
+
+    /**
+     * 注册参数校验，通过返回 null，否则返回错误提示。
+     */
+    private String validateRegisterUser(User user) {
+        String error = validateRegisterBasic(user);
+        if (error == null) {
+            error = validateRegisterEmailFormat(user);
         }
-        LambdaQueryWrapper<User> checkWrapper = new LambdaQueryWrapper<User>()
-                .eq(User::getUName, user.getUName());
-        if (!baseMapper.selectList(checkWrapper).isEmpty()) {
-            return ResponseDto.error("用户名已存在");
+        if (error == null) {
+            error = validateRegisterUnique(user);
         }
-        if (user.getPhone() != null && !user.getPhone().trim().isEmpty()) {
-            LambdaQueryWrapper<User> phoneWrapper = new LambdaQueryWrapper<User>()
-                    .eq(User::getPhone, user.getPhone());
-            if (!baseMapper.selectList(phoneWrapper).isEmpty()) {
-                return ResponseDto.error("手机号已被注册");
-            }
-        }
+        return error;
+    }
+
+    /**
+     * 基础字段校验：用户名、密码、用户类型。
+     */
+    private String validateRegisterBasic(User user) {
+        String error = null;
         // uType 来自请求体，/user/register 又在网关白名单内；
         // 此处只放行商家/顾客，否则任何人都能注册成管理员
         Integer uType = user.getUType();
-        if (uType == null || (uType != 1 && uType != 2)) {
-            return ResponseDto.error("用户类型只能为商家或顾客");
+        boolean typeAllowed = uType != null
+                && (uType == AuthConstant.U_TYPE_MERCHANT || uType == AuthConstant.U_TYPE_CUSTOMER);
+        if (user.getUName() == null || user.getUName().trim().isEmpty()) {
+            error = "用户名不能为空";
+        } else if (user.getPassword() == null || user.getPassword().trim().isEmpty()) {
+            error = "密码不能为空";
+        } else if (!typeAllowed) {
+            error = "用户类型只能为商家或顾客";
         }
+        return error;
+    }
+
+    /**
+     * 邮箱非空与格式校验。
+     */
+    private String validateRegisterEmailFormat(User user) {
         String email = user.getEmail() == null ? null : user.getEmail().trim();
         if (email == null || email.isEmpty()) {
-            return ResponseDto.error("邮箱不能为空");
+            return "邮箱不能为空";
         }
-        if (!EMAIL_PATTERN.matcher(email).matches()) {
-            return ResponseDto.error("邮箱格式不正确");
+        return EMAIL_PATTERN.matcher(email).matches() ? null : "邮箱格式不正确";
+    }
+
+    /**
+     * 用户名、手机号、邮箱唯一性校验。
+     */
+    private String validateRegisterUnique(User user) {
+        LambdaQueryWrapper<User> checkWrapper = new LambdaQueryWrapper<User>()
+                .eq(User::getUName, user.getUName());
+        if (!baseMapper.selectList(checkWrapper).isEmpty()) {
+            return "用户名已存在";
+        }
+        boolean hasPhone = user.getPhone() != null && !user.getPhone().trim().isEmpty();
+        LambdaQueryWrapper<User> phoneWrapper = new LambdaQueryWrapper<User>()
+                .eq(User::getPhone, user.getPhone());
+        if (hasPhone && !baseMapper.selectList(phoneWrapper).isEmpty()) {
+            return "手机号已被注册";
         }
         LambdaQueryWrapper<User> emailWrapper = new LambdaQueryWrapper<User>()
-                .eq(User::getEmail, email);
-        if (!baseMapper.selectList(emailWrapper).isEmpty()) {
-            return ResponseDto.error("邮箱已被注册");
-        }
-        ResponseDto<User> codeCheck = verifyEmailCode(email, request.getEmailCode());
+                .eq(User::getEmail, user.getEmail().trim());
+        return baseMapper.selectList(emailWrapper).isEmpty() ? null : "邮箱已被注册";
+    }
+
+    /**
+     * 校验邮箱验证码后落库。
+     */
+    private ResponseDto<User> doRegister(User user, String emailCode) {
+        String email = user.getEmail().trim();
+        ResponseDto<User> codeCheck = verifyEmailCode(email, emailCode);
         if (codeCheck != null) {
             return codeCheck;
         }
@@ -100,28 +156,17 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     @Override
     public ResponseDto<User> sendEmailCode(String email) {
         String addr = email == null ? null : email.trim();
-        if (addr == null || addr.isEmpty()) {
-            return ResponseDto.error("请输入邮箱");
+        String error = validateSendEmailCode(addr);
+        if (error != null) {
+            return ResponseDto.error(error);
         }
-        if (!EMAIL_PATTERN.matcher(addr).matches()) {
-            return ResponseDto.error("邮箱格式不正确");
-        }
-        LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<User>().eq(User::getEmail, addr);
-        if (!baseMapper.selectList(wrapper).isEmpty()) {
-            return ResponseDto.error("邮箱已被注册");
-        }
-        // 前端 60s 倒计时只是 UI 限制，这个端点在网关白名单内可被匿名直连，
-        // 服务端也要限频，否则能拿它对任意地址刷垃圾邮件
-        CodeEntry last = emailCodeStore.get(addr);
-        if (last != null && System.currentTimeMillis() - last.issuedAt < RESEND_INTERVAL_MS) {
-            return ResponseDto.error("验证码发送过于频繁，请稍后再试");
-        }
-        String code = String.format("%06d", new Random().nextInt(1000000));
+        String code = String.format("%06d", RANDOM.nextInt(CODE_BOUND));
         try {
             mailUtil.sendTo(addr, "注册验证码",
                     "您的注册验证码是：" + code + "，3 分钟内有效。若非本人操作请忽略此邮件。");
         } catch (Exception e) {
             // 发送失败就不要写入 code store，否则用户收不到却以为已发送
+            LOGGER.warn("[UserService] 注册验证码邮件发送失败 email={}", addr, e);
             return ResponseDto.error("验证码发送失败：" + e.getMessage());
         }
         emailCodeStore.put(addr, new CodeEntry(code, System.currentTimeMillis() + EMAIL_CODE_TTL_MS));
@@ -131,36 +176,67 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     }
 
     /**
+     * 发送邮箱验证码前的校验：格式、是否已注册、限频。
+     */
+    private String validateSendEmailCode(String addr) {
+        String error = null;
+        if (addr == null || addr.isEmpty()) {
+            error = "请输入邮箱";
+        } else if (!EMAIL_PATTERN.matcher(addr).matches()) {
+            error = "邮箱格式不正确";
+        } else if (!baseMapper.selectList(
+                new LambdaQueryWrapper<User>().eq(User::getEmail, addr)).isEmpty()) {
+            error = "邮箱已被注册";
+        } else {
+            // 前端 60s 倒计时只是 UI 限制，这个端点在网关白名单内可被匿名直连，
+            // 服务端也要限频，否则能拿它对任意地址刷垃圾邮件
+            CodeEntry last = emailCodeStore.get(addr);
+            if (last != null && System.currentTimeMillis() - last.issuedAt < RESEND_INTERVAL_MS) {
+                error = "验证码发送过于频繁，请稍后再试";
+            }
+        }
+        return error;
+    }
+
+    /**
      * 校验邮箱验证码，通过返回 null，否则返回带错误信息的响应。
      */
     private ResponseDto<User> verifyEmailCode(String email, String code) {
+        String error;
         if (code == null || code.trim().isEmpty()) {
-            return ResponseDto.error("请输入邮箱验证码");
+            error = "请输入邮箱验证码";
+        } else {
+            error = checkCodeEntry(emailCodeStore, email, code.trim());
         }
-        CodeEntry entry = emailCodeStore.get(email);
+        return error == null ? null : ResponseDto.error(error);
+    }
+
+    /**
+     * 校验验证码存储中的条目，通过返回 null，否则返回错误提示；过期时顺带清理。
+     */
+    private String checkCodeEntry(Map<String, CodeEntry> store, String key, String code) {
+        CodeEntry entry = store.get(key);
         if (entry == null) {
-            return ResponseDto.error("验证码未发送，请先获取验证码");
+            return "验证码未发送，请先获取验证码";
         }
         if (System.currentTimeMillis() > entry.expireAt) {
-            emailCodeStore.remove(email);
-            return ResponseDto.error("验证码已过期，请重新获取");
+            store.remove(key);
+            return "验证码已过期，请重新获取";
         }
-        if (!entry.code.equals(code.trim())) {
-            return ResponseDto.error("验证码错误");
-        }
-        return null;
+        return entry.code.equals(code) ? null : "验证码错误";
     }
 
     @Override
     public ResponseDto<User> login(String uName, String password) {
+        // TODO 密码当前为明文存储/明文比对，应迁移为加盐哈希（如 BCrypt）存储后再改造比对逻辑；
+        //  为不破坏存量数据，此处仅改为先按用户名查询、在应用层比对密码，避免把明文密码拼进查询条件
         LambdaQueryWrapper<User> queryWrapper = new LambdaQueryWrapper<User>()
-                .eq(User::getUName, uName)
-                .eq(User::getPassword, password);
+                .eq(User::getUName, uName);
         List<User> userList = baseMapper.selectList(queryWrapper);
-        if (userList.isEmpty()) {
+        User user = userList.isEmpty() ? null : userList.get(0);
+        if (user == null || user.getPassword() == null || !user.getPassword().equals(password)) {
             return ResponseDto.error("用户名或密码错误");
         }
-        User user = userList.get(0);
         String token = "token-" + user.getUId() + "-" + System.currentTimeMillis();
         Map<String, Object> data = new HashMap<>();
         data.put("token", token);
@@ -171,7 +247,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     }
 
     @Override
-    public ResponseDto<User> queryUser(String key, Integer gender, String birthdayStart, String birthdayEnd, int pageNo, int pageSize) {
+    public ResponseDto<User> queryUser(String key, Integer gender, String birthdayStart,
+                                       String birthdayEnd, int pageNo, int pageSize) {
         Page<User> page = new Page<>(pageNo, pageSize);
         LambdaQueryWrapper<User> queryWrapper = new LambdaQueryWrapper<User>()
                 .select(User::getUId, User::getUName, User::getRealName,
@@ -197,9 +274,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         if (users.isEmpty()) {
             return ResponseDto.error("该手机号未注册");
         }
-        String code = String.format("%06d", new Random().nextInt(1000000));
+        String code = String.format("%06d", RANDOM.nextInt(CODE_BOUND));
         codeStore.put(phone, new CodeEntry(code, System.currentTimeMillis() + CODE_TTL_MS));
-        System.out.println("[SMS-MOCK] 向 " + phone + " 发送验证码：" + code + "（5 分钟内有效）");
+        LOGGER.info("[SMS-MOCK] 向 {} 发送验证码：{}（5 分钟内有效）", phone, code);
         Map<String, Object> data = new HashMap<>();
         data.put("phone", phone);
         return ResponseDto.success(data);
@@ -207,25 +284,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
     @Override
     public ResponseDto<User> resetPassword(String phone, String code, String newPassword) {
-        if (phone == null || phone.trim().isEmpty()) {
-            return ResponseDto.error("请输入手机号");
-        }
-        if (code == null || code.trim().isEmpty()) {
-            return ResponseDto.error("请输入验证码");
-        }
-        if (newPassword == null || newPassword.trim().isEmpty()) {
-            return ResponseDto.error("请输入新密码");
-        }
-        CodeEntry entry = codeStore.get(phone);
-        if (entry == null) {
-            return ResponseDto.error("验证码未发送，请先获取验证码");
-        }
-        if (System.currentTimeMillis() > entry.expireAt) {
-            codeStore.remove(phone);
-            return ResponseDto.error("验证码已过期，请重新获取");
-        }
-        if (!entry.code.equals(code)) {
-            return ResponseDto.error("验证码错误");
+        String error = validateResetPassword(phone, code, newPassword);
+        if (error != null) {
+            return ResponseDto.error(error);
         }
         LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<User>().eq(User::getPhone, phone);
         List<User> users = baseMapper.selectList(wrapper);
@@ -239,6 +300,26 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         return ResponseDto.success(null);
     }
 
+    /**
+     * 重置密码入参与短信验证码校验，通过返回 null，否则返回错误提示。
+     */
+    private String validateResetPassword(String phone, String code, String newPassword) {
+        String error;
+        if (phone == null || phone.trim().isEmpty()) {
+            error = "请输入手机号";
+        } else if (code == null || code.trim().isEmpty()) {
+            error = "请输入验证码";
+        } else if (newPassword == null || newPassword.trim().isEmpty()) {
+            error = "请输入新密码";
+        } else {
+            error = checkCodeEntry(codeStore, phone, code);
+        }
+        return error;
+    }
+
+    /**
+     * 验证码条目：验证码内容、过期时间与签发时间。
+     */
     private static class CodeEntry {
         final String code;
         final long expireAt;
@@ -269,9 +350,32 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             return ResponseDto.error("用户ID不能为空");
         }
         User exists = baseMapper.selectById(user.getUId());
-        if (exists == null) {
-            return ResponseDto.error("用户不存在");
+        String error = exists == null ? "用户不存在" : checkPhoneUsable(user, exists);
+        if (error != null) {
+            return ResponseDto.error(error);
         }
+        return doUpdateProfile(user);
+    }
+
+    /**
+     * 手机号唯一性校验：仅当手机号有变化时检查是否被他人占用。
+     */
+    private String checkPhoneUsable(User user, User exists) {
+        boolean phoneChanged = user.getPhone() != null && !user.getPhone().trim().isEmpty()
+                && !user.getPhone().equals(exists.getPhone());
+        if (!phoneChanged) {
+            return null;
+        }
+        LambdaQueryWrapper<User> phoneWrapper = new LambdaQueryWrapper<User>()
+                .eq(User::getPhone, user.getPhone())
+                .ne(User::getUId, user.getUId());
+        return baseMapper.selectList(phoneWrapper).isEmpty() ? null : "手机号已被其他用户使用";
+    }
+
+    /**
+     * 执行资料更新并返回最新用户信息（不含密码）。
+     */
+    private ResponseDto<User> doUpdateProfile(User user) {
         // 仅允许修改基本信息，不在此修改用户名与密码
         User update = new User();
         update.setUId(user.getUId());
@@ -281,16 +385,6 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         update.setBirthday(user.getBirthday());
         // 传空串表示移除头像；传 null 表示本次不动它（MyBatis-Plus updateById 忽略 null）
         update.setAvatar(user.getAvatar());
-        // 手机号唯一性校验
-        if (user.getPhone() != null && !user.getPhone().trim().isEmpty()
-                && !user.getPhone().equals(exists.getPhone())) {
-            LambdaQueryWrapper<User> phoneWrapper = new LambdaQueryWrapper<User>()
-                    .eq(User::getPhone, user.getPhone())
-                    .ne(User::getUId, user.getUId());
-            if (!baseMapper.selectList(phoneWrapper).isEmpty()) {
-                return ResponseDto.error("手机号已被其他用户使用");
-            }
-        }
         int rows = baseMapper.updateById(update);
         if (rows <= 0) {
             return ResponseDto.error("更新失败");
@@ -302,7 +396,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
     @Override
     public ResponseDto<User> statisticsOverview() {
-        long totalUsers = 0L, customerCount = 0L, merchantCount = 0L, adminCount = 0L;
+        long totalUsers = 0L;
+        long customerCount = 0L;
+        long merchantCount = 0L;
+        long adminCount = 0L;
         for (Map<String, Object> row : baseMapper.countGroupByType()) {
             Object type = row.get("uType");
             long cnt = row.get("cnt") == null ? 0L : ((Number) row.get("cnt")).longValue();
@@ -311,9 +408,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
                 continue;
             }
             switch (((Number) type).intValue()) {
-                case 1: merchantCount = cnt; break;
-                case 2: customerCount = cnt; break;
-                case 3: adminCount = cnt; break;
+                case AuthConstant.U_TYPE_MERCHANT: merchantCount = cnt; break;
+                case AuthConstant.U_TYPE_CUSTOMER: customerCount = cnt; break;
+                case AuthConstant.U_TYPE_ADMIN: adminCount = cnt; break;
                 default: break;
             }
         }
@@ -328,7 +425,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     }
 
     @Override
-    public void export(String key, Integer gender, String birthdayStart, String birthdayEnd, HttpServletResponse response) throws Exception {
+    public void export(String key, Integer gender, String birthdayStart, String birthdayEnd,
+                       HttpServletResponse response) throws Exception {
         LambdaQueryWrapper<User> queryWrapper = new LambdaQueryWrapper<User>()
                 .select(User::getUId, User::getUName, User::getRealName,
                         User::getGender, User::getPhone, User::getBirthday, User::getEmail)
@@ -342,7 +440,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
                     .or().like(User::getPhone, key));
         }
         List<User> list = baseMapper.selectList(queryWrapper);
-        List<UserExportVO> rows = new java.util.ArrayList<>();
+        List<UserExportVO> rows = new ArrayList<>();
         for (int i = 0; i < list.size(); i++) {
             rows.add(UserExportVO.of(list.get(i), i + 1));
         }

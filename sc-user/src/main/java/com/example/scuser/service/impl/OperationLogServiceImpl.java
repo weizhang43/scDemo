@@ -10,8 +10,9 @@ import com.curry.model.OperationLog;
 import com.example.scuser.mapper.OperationLogMapper;
 import com.example.scuser.service.OperationLogService;
 import com.example.scuser.vo.OperationLogExportVO;
-import com.google.common.collect.Lists;
-import lombok.extern.slf4j.Slf4j;
+import exception.BusinessException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.annotation.Async;
@@ -21,7 +22,6 @@ import response.ResponseDto;
 
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.List;
@@ -29,12 +29,22 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 
-@Slf4j
+/**
+ * 操作日志服务：异步落库、分页查询、并行切片导出。
+ */
 @Service
 public class OperationLogServiceImpl extends ServiceImpl<OperationLogMapper, OperationLog>
         implements OperationLogService {
 
     public static final long PAGE_SIZE = 20000;
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(OperationLogServiceImpl.class);
+
+    /** 分页查询默认页码 */
+    private static final int DEFAULT_PAGE_NUM = 1;
+
+    /** 分页查询默认每页条数 */
+    private static final int DEFAULT_PAGE_SIZE = 10;
 
     @Autowired
     @Qualifier(value = "exportExecutor")
@@ -47,7 +57,7 @@ public class OperationLogServiceImpl extends ServiceImpl<OperationLogMapper, Ope
         try {
             baseMapper.insert(operationLog);
         } catch (Exception e) {
-            log.error("[OperationLog] 保存操作日志失败 log={}", operationLog, e);
+            LOGGER.error("[OperationLog] 保存操作日志失败 log={}", operationLog, e);
         }
     }
 
@@ -64,12 +74,14 @@ public class OperationLogServiceImpl extends ServiceImpl<OperationLogMapper, Ope
                 .le(StringUtils.hasText(endTime), OperationLog::getCreateTime, endTime)
                 .orderByDesc(OperationLog::getLogId);
         Page<OperationLog> page = baseMapper.selectPage(
-                new Page<>(pageNum == null ? 1 : pageNum, pageSize == null ? 10 : pageSize), wrapper);
+                new Page<>(pageNum == null ? DEFAULT_PAGE_NUM : pageNum,
+                        pageSize == null ? DEFAULT_PAGE_SIZE : pageSize), wrapper);
         return ResponseDto.success(page);
     }
 
     @Override
-    public void export(String uName, String module, String opType, Integer status, String beginTime, String endTime, HttpServletResponse response) {
+    public void export(String uName, String module, String opType, Integer status,
+                       String beginTime, String endTime, HttpServletResponse response) {
         long start = System.currentTimeMillis();
         response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
         response.setCharacterEncoding("utf-8");
@@ -79,44 +91,17 @@ public class OperationLogServiceImpl extends ServiceImpl<OperationLogMapper, Ope
             response.setHeader("Content-disposition", "attachment;filename*=UTF-8''" + fileName + ".xlsx");
             excelWriter = EasyExcel.write(response.getOutputStream(), OperationLogExportVO.class).build();
             WriteSheet writeSheet = EasyExcel.writerSheet("操作日志").build();
-            long totalRows = exportByIdSlice(uName, module, opType, status, beginTime, endTime, excelWriter, writeSheet);
-            log.info("[export] 总行数={}", totalRows);
+            long totalRows = exportByIdSlice(uName, module, opType, status, beginTime, endTime,
+                    excelWriter, writeSheet);
+            LOGGER.info("[export] 总行数={}", totalRows);
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            throw new BusinessException("操作日志导出失败", e);
         } finally {
             if (excelWriter != null) {
                 excelWriter.finish();
             }
         }
-        log.info("导出共耗时：{}", System.currentTimeMillis() - start);
-    }
-
-    /**
-     * 查找日志列表
-     *
-     * @param wrapper
-     * @return
-     */
-    private List<OperationLog> getLogList(LambdaQueryWrapper<OperationLog> wrapper) {
-        return baseMapper.selectList(wrapper);
-    }
-
-    /**
-     * 分页查找日志列表
-     *
-     * @param wrapper
-     * @return
-     */
-    private List<OperationLog> getLogList2(LambdaQueryWrapper<OperationLog> wrapper) {
-        long count = baseMapper.selectCount(wrapper);
-        long totalPage = count % PAGE_SIZE == 0 ? count / PAGE_SIZE : count / PAGE_SIZE + 1;
-        List<OperationLog> operationLogList = Lists.newArrayList();
-        for (int i = 1; i < totalPage + 1; i++) {
-            Page<OperationLog> page = baseMapper.selectPage(
-                    new Page<>(i, PAGE_SIZE), wrapper);
-            operationLogList.addAll(page.getRecords());
-        }
-        return operationLogList;
+        LOGGER.info("导出共耗时：{}", System.currentTimeMillis() - start);
     }
 
     /**
@@ -137,7 +122,7 @@ public class OperationLogServiceImpl extends ServiceImpl<OperationLogMapper, Ope
                 buildWrapper(uName, module, opType, status, beginTime, endTime)
                         .orderByDesc(OperationLog::getLogId)
                         .last("LIMIT 1"));
-        log.info("[export] min/max定界耗时={}ms", System.currentTimeMillis() - boundStart);
+        LOGGER.info("[export] min/max定界耗时={}ms", System.currentTimeMillis() - boundStart);
         if (minLog == null || maxLog == null) {
             return 0;
         }
@@ -149,23 +134,8 @@ public class OperationLogServiceImpl extends ServiceImpl<OperationLogMapper, Ope
             long endId = Math.min(startId + PAGE_SIZE - 1, maxId);
             long finalStartId = startId;
             futureList.add(CompletableFuture.supplyAsync(
-                    () -> {
-                        long sliceStart = System.currentTimeMillis();
-                        List<OperationLog> records = baseMapper.selectList(
-                                buildWrapper(uName, module, opType, status, beginTime, endTime)
-                                        .ge(OperationLog::getLogId, finalStartId)
-                                        .le(OperationLog::getLogId, endId)
-                                        .orderByDesc(OperationLog::getLogId));
-                        // VO 转换放在工作线程，减轻主线程写出压力
-                        List<OperationLogExportVO> voList = new ArrayList<>(records.size());
-                        for (OperationLog record : records) {
-                            voList.add(OperationLogExportVO.of(record));
-                        }
-                        log.info("[export] 分片[{}-{}] 线程={} 行数={} 耗时={}ms",
-                                finalStartId, endId, Thread.currentThread().getName(),
-                                voList.size(), System.currentTimeMillis() - sliceStart);
-                        return voList;
-                    },
+                    () -> querySlice(uName, module, opType, status, beginTime, endTime,
+                            finalStartId, endId),
                     exportExecutor));
         }
 
@@ -178,14 +148,39 @@ public class OperationLogServiceImpl extends ServiceImpl<OperationLogMapper, Ope
                 totalRows += voList.size();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new RuntimeException(e);
+                throw new BusinessException("操作日志导出被中断", e);
             } catch (ExecutionException e) {
-                throw new RuntimeException(e);
+                throw new BusinessException("操作日志切片查询失败", e);
             }
         }
         return totalRows;
     }
 
+    /**
+     * 查询单个 log_id 分片并在工作线程完成 VO 转换，减轻主线程写出压力。
+     */
+    private List<OperationLogExportVO> querySlice(String uName, String module, String opType,
+                                                  Integer status, String beginTime, String endTime,
+                                                  long startId, long endId) {
+        long sliceStart = System.currentTimeMillis();
+        List<OperationLog> records = baseMapper.selectList(
+                buildWrapper(uName, module, opType, status, beginTime, endTime)
+                        .ge(OperationLog::getLogId, startId)
+                        .le(OperationLog::getLogId, endId)
+                        .orderByDesc(OperationLog::getLogId));
+        List<OperationLogExportVO> voList = new ArrayList<>(records.size());
+        for (OperationLog record : records) {
+            voList.add(OperationLogExportVO.of(record));
+        }
+        LOGGER.info("[export] 分片[{}-{}] 线程={} 行数={} 耗时={}ms",
+                startId, endId, Thread.currentThread().getName(),
+                voList.size(), System.currentTimeMillis() - sliceStart);
+        return voList;
+    }
+
+    /**
+     * 按查询条件构建操作日志的查询包装器。
+     */
     private LambdaQueryWrapper<OperationLog> buildWrapper(String uName, String module, String opType,
                                                           Integer status, String beginTime, String endTime) {
         return new LambdaQueryWrapper<OperationLog>()
@@ -195,18 +190,5 @@ public class OperationLogServiceImpl extends ServiceImpl<OperationLogMapper, Ope
                 .eq(status != null, OperationLog::getStatus, status)
                 .ge(StringUtils.hasText(beginTime), OperationLog::getCreateTime, beginTime)
                 .le(StringUtils.hasText(endTime), OperationLog::getCreateTime, endTime);
-    }
-
-
-    /**
-     * 分页查询日志信息（不执行 count）
-     * @param wrapper
-     * @param pageNo
-     * @param pageSize
-     * @return
-     */
-    private List<OperationLog> getRecords(LambdaQueryWrapper<OperationLog> wrapper,int pageNo,long pageSize) {
-        Page<OperationLog> page = baseMapper.selectPage(new Page<>(pageNo, pageSize, false), wrapper);
-        return page.getRecords();
     }
 }

@@ -27,7 +27,8 @@ public interface UserService extends IService<User> {
     /**
      * 分页查询用户
      */
-    ResponseDto<User> queryUser(String key, Integer gender, String birthdayStart, String birthdayEnd, int pageNo, int pageSize);
+    ResponseDto<User> queryUser(String key, Integer gender, String birthdayStart,
+                                String birthdayEnd, int pageNo, int pageSize);
 
     /**
      * 发送短信验证码（模拟）：根据手机号定位用户并生成验证码
@@ -57,5 +58,6 @@ public interface UserService extends IService<User> {
     /**
      * 按查询条件导出用户列表为 Excel（EasyExcel）
      */
-    void export(String key, Integer gender, String birthdayStart, String birthdayEnd, HttpServletResponse response) throws Exception;
+    void export(String key, Integer gender, String birthdayStart, String birthdayEnd,
+                HttpServletResponse response) throws Exception;
 }

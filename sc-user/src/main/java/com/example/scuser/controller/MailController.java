@@ -10,14 +10,21 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import response.ResponseDto;
 
+/**
+ * 邮件发送接口。
+ */
 @RequestMapping(value = "/user/mail")
 @RestController
 public class MailController {
     @Autowired
     private MailUtil mailUtil;
 
+    /**
+     * 按用户名反查邮箱并发送邮件。
+     * @param orderMessage 收件人账号、主题与正文
+     */
     @PostMapping("/sendMail")
-    public ResponseDto sendMail(@RequestBody @Validated OrderMessage orderMessage) {
+    public ResponseDto<Void> sendMail(@RequestBody @Validated OrderMessage orderMessage) {
         return mailUtil.sendMail(orderMessage);
     }
 }

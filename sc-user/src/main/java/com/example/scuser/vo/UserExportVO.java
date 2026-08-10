@@ -38,6 +38,20 @@ public class UserExportVO {
     @ContentStyle(horizontalAlignment = HorizontalAlignmentEnum.CENTER)
     private String birthday;
 
+    /** 性别：保密 */
+    private static final int GENDER_SECRET = 0;
+
+    /** 性别：男 */
+    private static final int GENDER_MALE = 1;
+
+    /** 性别：女 */
+    private static final int GENDER_FEMALE = 2;
+
+    /**
+     * 由用户实体构建导出行。
+     * @param u 用户实体
+     * @param index 序号（从 1 开始）
+     */
     public static UserExportVO of(com.curry.model.User u, int index) {
         UserExportVO vo = new UserExportVO();
         vo.setIndex(index);
@@ -49,13 +63,21 @@ public class UserExportVO {
         return vo;
     }
 
+    /**
+     * 性别编码转中文文案，未知编码显示“未知”。
+     */
     private static String genderText(Integer g) {
-        if (g == null) return "未知";
-        switch (g) {
-            case 0: return "保密";
-            case 1: return "男";
-            case 2: return "女";
-            default: return "未知";
+        String text;
+        if (g == null) {
+            text = "未知";
+        } else {
+            switch (g) {
+                case GENDER_SECRET: text = "保密"; break;
+                case GENDER_MALE: text = "男"; break;
+                case GENDER_FEMALE: text = "女"; break;
+                default: text = "未知"; break;
+            }
         }
+        return text;
     }
 }

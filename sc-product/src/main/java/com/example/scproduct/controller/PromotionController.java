@@ -27,9 +27,10 @@ public class PromotionController {
 
     /** 商家端：折扣活动分页列表，pId 非空时只看某个商品 */
     @GetMapping("/pageQuery")
-    public ResponseDto<ProductPromotion> pageQuery(@RequestParam(value = "pId", required = false) Integer pId,
-                                                   @RequestParam(value = "pageNo", defaultValue = "1") int pageNo,
-                                                   @RequestParam(value = "pageSize", defaultValue = "10") int pageSize) {
+    public ResponseDto<ProductPromotion> pageQuery(
+            @RequestParam(value = "pId", required = false) Integer pId,
+            @RequestParam(value = "pageNo", defaultValue = "1") int pageNo,
+            @RequestParam(value = "pageSize", defaultValue = "10") int pageSize) {
         return promotionService.pageQuery(pId, pageNo, pageSize, AudienceResolver.current());
     }
 

@@ -68,7 +68,8 @@ public interface ProductMapper extends BaseMapper<Product> {
             "SELECT * FROM t_product " +
             "WHERE is_expired = 0 AND production_date IS NOT NULL AND shelf_life IS NOT NULL " +
             "AND DATE_ADD(production_date, INTERVAL shelf_life DAY) &gt;= CURDATE() " +
-            "AND DATE_ADD(production_date, INTERVAL shelf_life DAY) &lt;= DATE_ADD(CURDATE(), INTERVAL #{monthsAhead} MONTH) " +
+            "AND DATE_ADD(production_date, INTERVAL shelf_life DAY) " +
+            "    &lt;= DATE_ADD(CURDATE(), INTERVAL #{monthsAhead} MONTH) " +
             "<if test='merchantId != null'> AND (merchant_id = #{merchantId} OR merchant_id IS NULL) </if>" +
             "<if test='onSaleOnly'> AND status = 1 </if>" +
             "ORDER BY DATE_ADD(production_date, INTERVAL shelf_life DAY) ASC" +

@@ -3,7 +3,6 @@ package com.curry.model;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import javax.validation.constraints.Email;
 import javax.validation.constraints.NotBlank;
 
 @Data
@@ -13,7 +12,6 @@ public class OrderMessage {
      * 收件人账号
      */
     @NotBlank(message = "收件人账号不能为空")
-    //@Email(message = "收件人账号格式不正确")
     private String toAcc;
     /**
      * 邮件主题

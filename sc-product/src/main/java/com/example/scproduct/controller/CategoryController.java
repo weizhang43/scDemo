@@ -34,8 +34,9 @@ public class CategoryController {
 
     @OpLog(module = "商品管理", type = OpLog.OpType.ADD, description = "新增商品分类")
     @PostMapping
-    public ResponseDto<Category> create(@RequestBody Category category,
-                                        @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer uType) {
+    public ResponseDto<Category> create(
+            @RequestBody Category category,
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer uType) {
         if (isCustomer(uType)) {
             return ResponseDto.error("无权管理商品分类");
         }
@@ -44,8 +45,9 @@ public class CategoryController {
 
     @OpLog(module = "商品管理", type = OpLog.OpType.UPDATE, description = "修改商品分类")
     @PutMapping
-    public ResponseDto<Category> update(@RequestBody Category category,
-                                        @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer uType) {
+    public ResponseDto<Category> update(
+            @RequestBody Category category,
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer uType) {
         if (isCustomer(uType)) {
             return ResponseDto.error("无权管理商品分类");
         }
@@ -54,8 +56,9 @@ public class CategoryController {
 
     @OpLog(module = "商品管理", type = OpLog.OpType.DELETE, description = "删除商品分类")
     @DeleteMapping("/{id}")
-    public ResponseDto<Category> remove(@PathVariable("id") Integer id,
-                                        @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer uType) {
+    public ResponseDto<Category> remove(
+            @PathVariable("id") Integer id,
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer uType) {
         if (isCustomer(uType)) {
             return ResponseDto.error("无权管理商品分类");
         }

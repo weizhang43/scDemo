@@ -13,13 +13,25 @@ import response.ResponseDto;
 import java.util.Date;
 import java.util.List;
 
+/**
+ * 通知公告服务：分页查询、发布列表、增删改与状态变更。
+ */
 @Service
 public class NoticeServiceImpl extends ServiceImpl<NoticeMapper, Notice> implements NoticeService {
 
+    /** 分页查询默认每页条数 */
+    private static final int DEFAULT_PAGE_SIZE = 10;
+
+    /** 通知状态：已发布 */
+    private static final int STATUS_PUBLISHED = 1;
+
+    /**
+     * 按标题与状态分页查询通知。
+     */
     @Override
     public ResponseDto<Notice> pageQuery(Integer pageNum, Integer pageSize, String title, Integer status) {
         long current = pageNum == null || pageNum < 1 ? 1 : pageNum;
-        long size = pageSize == null || pageSize < 1 ? 10 : pageSize;
+        long size = pageSize == null || pageSize < 1 ? DEFAULT_PAGE_SIZE : pageSize;
         LambdaQueryWrapper<Notice> wrapper = new LambdaQueryWrapper<Notice>()
                 .like(StringUtils.hasText(title), Notice::getTitle, title)
                 .eq(status != null, Notice::getStatus, status)
@@ -29,22 +41,31 @@ public class NoticeServiceImpl extends ServiceImpl<NoticeMapper, Notice> impleme
         return ResponseDto.success(page);
     }
 
+    /**
+     * 查询全部已发布的通知，按排序值与创建时间倒序。
+     */
     @Override
     public ResponseDto<Notice> listPublished() {
         LambdaQueryWrapper<Notice> wrapper = new LambdaQueryWrapper<Notice>()
-                .eq(Notice::getStatus, 1)
+                .eq(Notice::getStatus, STATUS_PUBLISHED)
                 .orderByDesc(Notice::getSortOrder)
                 .orderByDesc(Notice::getCreateTime);
         List<Notice> list = baseMapper.selectList(wrapper);
         return ResponseDto.success(list);
     }
 
+    /**
+     * 按 ID 查询通知详情。
+     */
     @Override
     public ResponseDto<Notice> getDetail(Long noticeId) {
         Notice notice = baseMapper.selectById(noticeId);
         return notice == null ? ResponseDto.error("通知不存在") : ResponseDto.success(notice);
     }
 
+    /**
+     * 新增通知：默认已发布、排序值 0，记录创建人信息。
+     */
     @Override
     public ResponseDto<Notice> addNotice(Notice notice, Integer uId, String uName) {
         if (!StringUtils.hasText(notice.getTitle())) {
@@ -52,7 +73,7 @@ public class NoticeServiceImpl extends ServiceImpl<NoticeMapper, Notice> impleme
         }
         notice.setNoticeId(null);
         if (notice.getStatus() == null) {
-            notice.setStatus(1);
+            notice.setStatus(STATUS_PUBLISHED);
         }
         if (notice.getSortOrder() == null) {
             notice.setSortOrder(0);
@@ -66,6 +87,9 @@ public class NoticeServiceImpl extends ServiceImpl<NoticeMapper, Notice> impleme
         return ResponseDto.success(notice);
     }
 
+    /**
+     * 修改通知内容，创建人信息不允许被覆盖。
+     */
     @Override
     public ResponseDto<Notice> updateNotice(Notice notice) {
         if (notice.getNoticeId() == null) {
@@ -82,6 +106,9 @@ public class NoticeServiceImpl extends ServiceImpl<NoticeMapper, Notice> impleme
         return ResponseDto.success(baseMapper.selectById(notice.getNoticeId()));
     }
 
+    /**
+     * 删除通知。
+     */
     @Override
     public ResponseDto<Notice> removeNotice(Long noticeId) {
         if (noticeId == null) {
@@ -91,6 +118,9 @@ public class NoticeServiceImpl extends ServiceImpl<NoticeMapper, Notice> impleme
         return rows > 0 ? ResponseDto.success(null) : ResponseDto.error("通知不存在或已删除");
     }
 
+    /**
+     * 变更通知的发布状态。
+     */
     @Override
     public ResponseDto<Notice> changeStatus(Long noticeId, Integer status) {
         if (noticeId == null || status == null) {

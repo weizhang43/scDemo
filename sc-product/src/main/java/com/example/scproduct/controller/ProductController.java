@@ -10,7 +10,9 @@ import com.example.scproduct.auth.AudienceScope;
 import com.example.scproduct.service.ExportTaskService;
 import com.example.scproduct.service.ProductService;
 import com.example.scproduct.vo.ExportTaskVO;
+import com.example.scproduct.vo.ProductQuery;
 import com.example.scproduct.vo.ProductTypeCountVO;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -29,6 +31,7 @@ import javax.servlet.http.HttpServletResponse;
 import java.util.Date;
 import java.util.List;
 
+@Slf4j
 @RestController
 @RequestMapping(value = "/product")
 public class ProductController {
@@ -121,33 +124,18 @@ public class ProductController {
      * 商品列表分页查询：商品名称、商品描述、生产日期区间、产地、是否过期、上下架过滤。
      * 默认按 id 倒序，sortBy 可切成交数 / 评价数 / 点赞数；结果始终带成交数与评价数。
      * 商品描述模糊检索下沉到 ES，ES 不可用时降级回 MySQL LIKE。
+     * 查询条件走对象绑定（字段名与原 @RequestParam 参数名一致，前端无感知）。
      */
     @GetMapping("/pageQuery")
     @SentinelResource(value = "product-pageQuery", blockHandler = "pageQueryBlockHandler")
-    public ResponseDto<Product> pageQuery(@RequestParam(value = "pName", required = false) String pName,
-                                          @RequestParam(value = "proDesc", required = false) String proDesc,
-                                          @RequestParam(value = "productionDateStart", required = false)
-                                          @DateTimeFormat(pattern = "yyyy-MM-dd") Date productionDateStart,
-                                          @RequestParam(value = "productionDateEnd", required = false)
-                                          @DateTimeFormat(pattern = "yyyy-MM-dd") Date productionDateEnd,
-                                          @RequestParam(value = "origin", required = false) String origin,
-                                          @RequestParam(value = "isExpired", required = false) Integer isExpired,
-                                          @RequestParam(value = "status", required = false) Integer status,
-                                          @RequestParam(value = "categoryId", required = false) Integer categoryId,
-                                          @RequestParam(value = "sortBy", required = false) String sortBy,
-                                          @RequestParam(value = "pageNo", defaultValue = "1") int pageNo,
-                                          @RequestParam(value = "pageSize", defaultValue = "10") int pageSize) {
-        return productService.pageQuery(pName, proDesc, productionDateStart, productionDateEnd, origin, isExpired,
-                status, categoryId, sortBy, pageNo, pageSize, AudienceResolver.current());
+    public ResponseDto<Product> pageQuery(ProductQuery query) {
+        return productService.pageQuery(query, AudienceResolver.current());
     }
 
     /**
-     * pageQuery 限流兜底：参数列表须与原方法一致，末尾追加 BlockException
+     * pageQuery 限流兜底：参数列表须与原方法一致，末尾追加 BlockException。
      */
-    public ResponseDto<Product> pageQueryBlockHandler(String pName, String proDesc, Date productionDateStart, Date productionDateEnd,
-                                                      String origin, Integer isExpired, Integer status, Integer categoryId, String sortBy,
-                                                      int pageNo, int pageSize,
-                                                      BlockException ex) {
+    public ResponseDto<Product> pageQueryBlockHandler(ProductQuery query, BlockException ex) {
         return ResponseDto.error("请求过于频繁，请稍后再试");
     }
 
@@ -193,12 +181,13 @@ public class ProductController {
      */
     @PostMapping("/addStock")
     public ResponseDto<Product> addStock(@RequestBody List<Product> products) {
-        try{
+        try {
             return productService.addStock(products, AudienceResolver.current());
-        }catch (Exception e){
+        } catch (Exception e) {
+            log.error("[addStock] 修改库存失败, products size={}",
+                    products == null ? 0 : products.size(), e);
             return ResponseDto.error("修改库存失败");
         }
-
     }
 
     /**
@@ -210,20 +199,12 @@ public class ProductController {
     }
 
     /**
-     * 按查询条件导出商品列表（EasyExcel）
+     * 按查询条件导出商品列表（EasyExcel）。
+     * 查询条件走对象绑定（字段名与原 @RequestParam 参数名一致，前端无感知）。
      */
     @GetMapping("/export")
-    public void export(@RequestParam(value = "pName", required = false) String pName,
-                       @RequestParam(value = "proDesc", required = false) String proDesc,
-                       @RequestParam(value = "productionDateStart", required = false)
-                       @DateTimeFormat(pattern = "yyyy-MM-dd") Date productionDateStart,
-                       @RequestParam(value = "productionDateEnd", required = false)
-                       @DateTimeFormat(pattern = "yyyy-MM-dd") Date productionDateEnd,
-                       @RequestParam(value = "origin", required = false) String origin,
-                       @RequestParam(value = "isExpired", required = false) Integer isExpired,
-                       HttpServletResponse response) throws Exception {
-        productService.export(pName, proDesc, productionDateStart, productionDateEnd, origin, isExpired,
-                AudienceResolver.current(), response);
+    public void export(ProductQuery query, HttpServletResponse response) throws Exception {
+        productService.export(query, AudienceResolver.current(), response);
     }
 
     /**

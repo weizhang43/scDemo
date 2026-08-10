@@ -26,7 +26,9 @@ public class DashboardOverviewVO implements Serializable {
     public void setPendingShipCount(Long pendingShipCount) { this.pendingShipCount = pendingShipCount; }
 
     public Long getPendingAfterSaleCount() { return pendingAfterSaleCount; }
-    public void setPendingAfterSaleCount(Long pendingAfterSaleCount) { this.pendingAfterSaleCount = pendingAfterSaleCount; }
+    public void setPendingAfterSaleCount(Long pendingAfterSaleCount) {
+        this.pendingAfterSaleCount = pendingAfterSaleCount;
+    }
 
     public Long getUnpaidCount() { return unpaidCount; }
     public void setUnpaidCount(Long unpaidCount) { this.unpaidCount = unpaidCount; }

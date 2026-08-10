@@ -1,7 +1,8 @@
 package com.example.scuser.config;
 
 import exception.BusinessException;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -10,12 +11,19 @@ import response.ResponseDto;
 
 import java.util.stream.Collectors;
 
-@Slf4j
+/**
+ * 全局异常处理：参数校验、业务异常与兜底异常统一转 ResponseDto。
+ */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    /**
+     * 参数校验失败：聚合各字段错误提示返回。
+     */
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseDto handleValidException(MethodArgumentNotValidException e) {
+    public ResponseDto<Void> handleValidException(MethodArgumentNotValidException e) {
         String msg = e.getBindingResult().getFieldErrors().stream()
                 .map(FieldError::getDefaultMessage)
                 .collect(Collectors.joining("; "));
@@ -28,9 +36,12 @@ public class GlobalExceptionHandler {
         return ResponseDto.error(e.getMessage());
     }
 
+    /**
+     * 兜底异常：记录堆栈并返回通用提示。
+     */
     @ExceptionHandler(Exception.class)
     public ResponseDto<Void> handleException(Exception e) {
-        log.error("[GlobalExceptionHandler] unexpected error", e);
+        LOGGER.error("[GlobalExceptionHandler] unexpected error", e);
         return ResponseDto.error("系统繁忙，请稍后重试");
     }
 }

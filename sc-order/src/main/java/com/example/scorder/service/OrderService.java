@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.extension.service.IService;
 import com.curry.model.Order;
 import com.curry.model.Product;
 import com.example.scorder.auth.OrderScope;
+import com.example.scorder.dto.OrderQueryRequest;
 import com.example.scorder.dto.PlaceOrderRequest;
 import com.example.scorder.dto.SeckillRequest;
 import com.example.scorder.vo.MonthlySalesVO;
@@ -59,14 +60,15 @@ public interface OrderService extends IService<Order> {
 
 
     /**
-     * 分页查询订单。scope 决定归属过滤：顾客只返回自己的订单。
+     * 分页查询订单（查询条件封装为对象）。scope 决定归属过滤：顾客只返回自己的订单。
      */
-    ResponseDto<Order> queryOrder(String key, String orderNo, Integer orderStatus, Date createTimeStart, Date createTimeEnd, int pageNo, int pageSize, OrderScope scope);
+    ResponseDto<Order> queryOrder(OrderQueryRequest query, OrderScope scope);
 
     /**
      * 统计各订单状态数量（用于列表状态 Tab 徽标），返回 key 为状态值字符串、value 为数量。
      */
-    Map<String, Long> countByStatus(String key, String orderNo, Date createTimeStart, Date createTimeEnd, OrderScope scope);
+    Map<String, Long> countByStatus(String key, String orderNo, Date createTimeStart,
+                                    Date createTimeEnd, OrderScope scope);
 
     /**
      * 按主键查询订单及商品明细，scope 无权时返回 null（不区分"不存在"与"无权"）。
@@ -102,7 +104,8 @@ public interface OrderService extends IService<Order> {
     /**
      * 按查询条件导出订单列表为 Excel（EasyExcel）
      */
-    void export(String key, String orderNo, Date createTimeStart, Date createTimeEnd, OrderScope scope, HttpServletResponse response) throws Exception;
+    void export(String key, String orderNo, Date createTimeStart, Date createTimeEnd,
+                OrderScope scope, HttpServletResponse response) throws Exception;
 
     /**
      * 秒杀下单（同步段）：远程 Redis 预扣活动名额 → 成功则投递队列异步落库，立即返回。

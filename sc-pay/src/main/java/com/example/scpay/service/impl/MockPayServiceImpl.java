@@ -23,6 +23,15 @@ import java.util.UUID;
 public class MockPayServiceImpl implements MockPayService {
 
     private static final long TIMESTAMP_WINDOW_MS = 5 * 60 * 1000L;
+    /** 交易号中随机段长度 */
+    private static final int TXN_RANDOM_LEN = 8;
+    /** 交易单不存在提示 */
+    private static final String MSG_TXN_NOT_FOUND = "交易单不存在";
+    /** 请求参数名：渠道交易号 */
+    private static final String PARAM_TRANSACTION_ID = "transactionId";
+    /** 模拟支付结果 */
+    private static final String RESULT_SUCCESS = "SUCCESS";
+    private static final String RESULT_FAIL = "FAIL";
 
     @Autowired
     private MockPayTxnMapper txnMapper;
@@ -44,7 +53,7 @@ public class MockPayServiceImpl implements MockPayService {
         try {
             ts = Long.parseLong(params.get("timestamp"));
         } catch (Exception e) {
-            throw new BusinessException("timestamp 非法");
+            throw new BusinessException("timestamp 非法", e);
         }
         if (Math.abs(System.currentTimeMillis() - ts) > TIMESTAMP_WINDOW_MS) {
             throw new BusinessException("请求已过期");
@@ -64,7 +73,7 @@ public class MockPayServiceImpl implements MockPayService {
         try {
             amount = new BigDecimal(amountStr);
         } catch (Exception e) {
-            throw new BusinessException("amount 非法");
+            throw new BusinessException("amount 非法", e);
         }
         if (amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new BusinessException("amount 必须大于 0");
@@ -96,7 +105,7 @@ public class MockPayServiceImpl implements MockPayService {
     @Override
     public MockPayTxn query(Map<String, String> params) {
         checkSign(params);
-        String transactionId = params.get("transactionId");
+        String transactionId = params.get(PARAM_TRANSACTION_ID);
         if (transactionId != null && !transactionId.isEmpty()) {
             return getByTransactionId(transactionId);
         }
@@ -110,10 +119,10 @@ public class MockPayServiceImpl implements MockPayService {
     @Override
     public MockPayTxn closeTxn(Map<String, String> params) {
         checkSign(params);
-        String transactionId = params.get("transactionId");
+        String transactionId = params.get(PARAM_TRANSACTION_ID);
         MockPayTxn txn = getByTransactionId(transactionId);
         if (txn == null) {
-            throw new BusinessException("交易单不存在");
+            throw new BusinessException(MSG_TXN_NOT_FOUND);
         }
         // CAS 0→3，已终态原样返回（幂等）
         txnMapper.casUpdateStatus(transactionId, MockPayTxn.STATUS_PENDING, MockPayTxn.STATUS_CLOSED);
@@ -123,10 +132,10 @@ public class MockPayServiceImpl implements MockPayService {
     @Override
     public MockPayTxn refund(Map<String, String> params) {
         checkSign(params);
-        String transactionId = params.get("transactionId");
+        String transactionId = params.get(PARAM_TRANSACTION_ID);
         MockPayTxn txn = getByTransactionId(transactionId);
         if (txn == null) {
-            throw new BusinessException("交易单不存在");
+            throw new BusinessException(MSG_TXN_NOT_FOUND);
         }
         if (txn.getStatus() != MockPayTxn.STATUS_SUCCESS) {
             throw new BusinessException("交易未成功，无法退款");
@@ -150,13 +159,13 @@ public class MockPayServiceImpl implements MockPayService {
 
     @Override
     public MockPayTxn simulate(String transactionId, String result) {
-        boolean success = "SUCCESS".equalsIgnoreCase(result);
-        if (!success && !"FAIL".equalsIgnoreCase(result)) {
+        boolean success = RESULT_SUCCESS.equalsIgnoreCase(result);
+        if (!success && !RESULT_FAIL.equalsIgnoreCase(result)) {
             throw new BusinessException("result 只支持 SUCCESS/FAIL");
         }
         MockPayTxn txn = getByTransactionId(transactionId);
         if (txn == null) {
-            throw new BusinessException("交易单不存在");
+            throw new BusinessException(MSG_TXN_NOT_FOUND);
         }
         int target = success ? MockPayTxn.STATUS_SUCCESS : MockPayTxn.STATUS_FAIL;
         int rows = txnMapper.casUpdateStatus(transactionId, MockPayTxn.STATUS_PENDING, target);
@@ -165,7 +174,7 @@ public class MockPayServiceImpl implements MockPayService {
             return getByTransactionId(transactionId);
         }
         MockPayTxn updated = getByTransactionId(transactionId);
-        notifySender.scheduleNotify(updated, success ? "SUCCESS" : "FAIL");
+        notifySender.scheduleNotify(updated, success ? RESULT_SUCCESS : RESULT_FAIL);
         return updated;
     }
 
@@ -173,13 +182,13 @@ public class MockPayServiceImpl implements MockPayService {
     public MockPayTxn renotify(String transactionId) {
         MockPayTxn txn = getByTransactionId(transactionId);
         if (txn == null) {
-            throw new BusinessException("交易单不存在");
+            throw new BusinessException(MSG_TXN_NOT_FOUND);
         }
         if (txn.getStatus() != MockPayTxn.STATUS_SUCCESS && txn.getStatus() != MockPayTxn.STATUS_FAIL) {
             throw new BusinessException("交易未到终态，无法重发回调");
         }
         notifySender.scheduleNotify(txn,
-                txn.getStatus() == MockPayTxn.STATUS_SUCCESS ? "SUCCESS" : "FAIL");
+                txn.getStatus() == MockPayTxn.STATUS_SUCCESS ? RESULT_SUCCESS : RESULT_FAIL);
         return txn;
     }
 
@@ -189,6 +198,6 @@ public class MockPayServiceImpl implements MockPayService {
 
     private String generateTransactionId() {
         return "MTX" + System.currentTimeMillis()
-                + UUID.randomUUID().toString().replace("-", "").substring(0, 8).toUpperCase();
+                + UUID.randomUUID().toString().replace("-", "").substring(0, TXN_RANDOM_LEN).toUpperCase();
     }
 }

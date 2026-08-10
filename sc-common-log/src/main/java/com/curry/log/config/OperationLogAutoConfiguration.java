@@ -23,6 +23,15 @@ import java.util.concurrent.TimeUnit;
 @EnableFeignClients(clients = OperationLogClient.class)
 public class OperationLogAutoConfiguration {
 
+    /** 日志发送线程池核心线程数 */
+    private static final int CORE_POOL_SIZE = 2;
+    /** 日志发送线程池最大线程数 */
+    private static final int MAX_POOL_SIZE = 4;
+    /** 空闲线程存活时间（秒） */
+    private static final long KEEP_ALIVE_SECONDS = 60L;
+    /** 有界队列容量，防止日志积压压垮内存 */
+    private static final int QUEUE_CAPACITY = 1000;
+
     /**
      * 日志发送专用线程池：有界队列 + CallerRuns，避免积压压垮内存，
      * 极端情况下回退到调用线程执行(仅拖慢单次请求，不丢日志)。
@@ -30,8 +39,8 @@ public class OperationLogAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(name = "operationLogExecutor")
     public Executor operationLogExecutor() {
-        return new ThreadPoolExecutor(2, 4, 60L, TimeUnit.SECONDS,
-                new LinkedBlockingQueue<>(1000),
+        return new ThreadPoolExecutor(CORE_POOL_SIZE, MAX_POOL_SIZE, KEEP_ALIVE_SECONDS, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(QUEUE_CAPACITY),
                 r -> {
                     Thread t = new Thread(r, "op-log-sender");
                     t.setDaemon(true);
@@ -47,6 +56,9 @@ public class OperationLogAutoConfiguration {
         return new FeignOperationLogSink(client);
     }
 
+    /**
+     * 注册共享操作日志切面，组装日志后交给异步线程池经 Sink 落地。
+     */
     @Bean
     @ConditionalOnMissingBean(OperationLogAspect.class)
     public OperationLogAspect operationLogAspect(OperationLogSink sink, Executor operationLogExecutor) {

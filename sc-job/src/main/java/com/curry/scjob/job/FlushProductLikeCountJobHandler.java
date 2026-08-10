@@ -1,8 +1,10 @@
 package com.curry.scjob.job;
 
+import com.curry.scjob.exception.JobExecuteException;
 import com.curry.scjob.service.ProductFeignService;
 import com.xxl.job.core.handler.annotation.XxlJob;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import response.ResponseDto;
@@ -16,26 +18,30 @@ import static response.ResponseDto.SUCCESS_CODE;
  *       削峰、降低 DB 写压力。
  * 建议在 xxl-job admin 配置较短周期（如每 10~30 秒）调度，且路由策略为「第一个」，多节点下只由一个节点执行。
  */
-@Slf4j
 @Component
 public class FlushProductLikeCountJobHandler {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(FlushProductLikeCountJobHandler.class);
 
     @Autowired
     private ProductFeignService productFeignService;
 
+    /**
+     * XXL-Job 入口：触发 sc-product 批量回写点赞数，失败时抛出异常使本次调度标记为失败。
+     */
     @XxlJob("flushProductLikeCountJob")
     public void execute() {
         long start = System.currentTimeMillis();
         try {
             ResponseDto<Integer> resp = productFeignService.flushLikeCount();
             if (resp == null || !SUCCESS_CODE.equals(resp.getCode())) {
-                throw new RuntimeException("sc-product flushLikeCount fail, resp=" + resp);
+                throw new JobExecuteException("sc-product flushLikeCount fail, resp=" + resp);
             }
-            log.info("[flushProductLikeCountJob] finish, flushed={} costMs={}",
+            LOGGER.info("[flushProductLikeCountJob] finish, flushed={} costMs={}",
                     resp.getDaoResult(), System.currentTimeMillis() - start);
         } catch (Exception e) {
-            log.error("[flushProductLikeCountJob] error", e);
-            throw new RuntimeException(e);
+            LOGGER.error("[flushProductLikeCountJob] error", e);
+            throw new JobExecuteException("flushProductLikeCountJob job error", e);
         }
     }
 }

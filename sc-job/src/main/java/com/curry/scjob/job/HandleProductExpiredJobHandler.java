@@ -1,8 +1,10 @@
 package com.curry.scjob.job;
 
+import com.curry.scjob.exception.JobExecuteException;
 import com.curry.scjob.service.ProductFeignService;
 import com.xxl.job.core.handler.annotation.XxlJob;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import response.ResponseDto;
@@ -19,9 +21,10 @@ import static response.ResponseDto.SUCCESS_CODE;
  *       若 production_date + shelf_life 天 < 当前日期，则将 is_expired 改为 1；
  *       随后把所有已过期商品统一下架（status 改为 0）。
  */
-@Slf4j
 @Component
 public class HandleProductExpiredJobHandler {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(HandleProductExpiredJobHandler.class);
 
     @Autowired
     private ProductFeignService productFeignService;
@@ -32,18 +35,18 @@ public class HandleProductExpiredJobHandler {
     @XxlJob("handleProductExpiredJob")
     public void execute() {
         String now = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
-        log.info("[handleProductExpiredJob] start, scanTime={}", now);
+        LOGGER.info("[handleProductExpiredJob] start, scanTime={}", now);
         long start = System.currentTimeMillis();
         try {
             ResponseDto<String> resp = productFeignService.markExpired();
             if (resp == null || !SUCCESS_CODE.equals(resp.getCode())) {
-                throw new RuntimeException("sc-product markExpired fail, resp=" + resp);
+                throw new JobExecuteException("sc-product markExpired fail, resp=" + resp);
             }
-            log.info("[handleProductExpiredJob] finish, {} costMs={}",
+            LOGGER.info("[handleProductExpiredJob] finish, {} costMs={}",
                     resp.getDaoResult(), System.currentTimeMillis() - start);
         } catch (Exception e) {
-            log.error("[handleProductExpiredJob] error", e);
-            throw new RuntimeException(e);
+            LOGGER.error("[handleProductExpiredJob] error", e);
+            throw new JobExecuteException("handleProductExpiredJob job error", e);
         }
     }
 }

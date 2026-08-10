@@ -1,12 +1,16 @@
 package com.example.scorder.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.curry.model.Order;
 import com.curry.model.OrderItem;
 import com.curry.model.Product;
+import com.example.scorder.client.CouponClient;
 import com.example.scorder.entity.OrderStockRestoreMsg;
 import com.example.scorder.mapper.OrderItemMapper;
+import com.example.scorder.mapper.OrderMapper;
 import com.example.scorder.mapper.OrderStockRestoreMsgMapper;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -26,8 +30,18 @@ import static response.ResponseDto.SUCCESS_CODE;
  * 失败按指数退避重试，超过 max_retry 置 status=2 等待人工介入。
  */
 @Service
-@Slf4j
 public class StockRestoreMsgConsumer {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(StockRestoreMsgConsumer.class);
+
+    /** 单批扫描条数 */
+    private static final int BATCH_SIZE = 50;
+
+    /** 指数退避基数（毫秒）：第 n 次重试等待 2^n * 10s */
+    private static final long BACKOFF_BASE_MS = 10_000L;
+
+    /** 消息终态：重试超限失败，等待人工介入 */
+    private static final int MSG_STATUS_FAILED = 2;
 
     @Autowired
     private OrderStockRestoreMsgMapper orderStockRestoreMsgMapper;
@@ -36,15 +50,13 @@ public class StockRestoreMsgConsumer {
     private OrderItemMapper orderItemMapper;
 
     @Autowired
-    private com.example.scorder.mapper.OrderMapper orderMapper;
+    private OrderMapper orderMapper;
 
     @Autowired
-    private com.example.scorder.client.CouponClient couponClient;
+    private CouponClient couponClient;
 
     @Autowired
     private OrderFeignService orderFeignService;
-
-    private static final int BATCH_SIZE = 50;
 
     /**
      * 每 5s 扫一次待处理消息。
@@ -65,7 +77,7 @@ public class StockRestoreMsgConsumer {
             try {
                 processOne(msg);
             } catch (Exception ex) {
-                log.error("处理回库存消息异常 msgId={} oId={}", msg.getId(), msg.getOId(), ex);
+                LOGGER.error("处理回库存消息异常 msgId={} oId={}", msg.getId(), msg.getOId(), ex);
             }
         }
     }
@@ -97,7 +109,7 @@ public class StockRestoreMsgConsumer {
         try {
             resp = orderFeignService.addStock(productList);
         } catch (Exception ex) {
-            log.warn("调 addStock 异常 msgId={} oId={}，触发重试", msg.getId(), msg.getOId(), ex);
+            LOGGER.warn("调 addStock 异常 msgId={} oId={}，触发重试", msg.getId(), msg.getOId(), ex);
             markRetryOrFail(msg);
             return;
         }
@@ -109,7 +121,7 @@ public class StockRestoreMsgConsumer {
             }
             markDone(msg);
         } else {
-            log.warn("addStock 业务失败 msgId={} oId={} msg={}", msg.getId(), msg.getOId(),
+            LOGGER.warn("addStock 业务失败 msgId={} oId={} msg={}", msg.getId(), msg.getOId(),
                     resp == null ? "null" : resp.getMsg());
             markRetryOrFail(msg);
         }
@@ -120,7 +132,7 @@ public class StockRestoreMsgConsumer {
      * 返回 false 表示需要重试；无券或返还成功返回 true。
      */
     private boolean restoreCouponIfAny(OrderStockRestoreMsg msg) {
-        com.curry.model.Order order = orderMapper.selectById(msg.getOId());
+        Order order = orderMapper.selectById(msg.getOId());
         if (order == null || order.getCouponId() == null) {
             return true;
         }
@@ -129,10 +141,10 @@ public class StockRestoreMsgConsumer {
             if (resp != null && SUCCESS_CODE.equals(resp.getCode())) {
                 return true;
             }
-            log.warn("券返还业务失败 msgId={} oId={} couponId={} msg={}", msg.getId(), msg.getOId(),
+            LOGGER.warn("券返还业务失败 msgId={} oId={} couponId={} msg={}", msg.getId(), msg.getOId(),
                     order.getCouponId(), resp == null ? "null" : resp.getMsg());
         } catch (Exception ex) {
-            log.warn("调券返还异常 msgId={} oId={} couponId={}，触发重试",
+            LOGGER.warn("调券返还异常 msgId={} oId={} couponId={}，触发重试",
                     msg.getId(), msg.getOId(), order.getCouponId(), ex);
         }
         return false;
@@ -154,10 +166,10 @@ public class StockRestoreMsgConsumer {
         OrderStockRestoreMsg update = new OrderStockRestoreMsg();
         update.setId(msg.getId());
         if (newRetry >= msg.getMaxRetry()) {
-            update.setStatus(2);
+            update.setStatus(MSG_STATUS_FAILED);
         } else {
             update.setRetryCnt(newRetry);
-            long backoffMs = (1L << newRetry) * 10_000L; // 20s, 40s, 80s ...
+            long backoffMs = (1L << newRetry) * BACKOFF_BASE_MS; // 20s, 40s, 80s ...
             update.setNextRetry(new Date(System.currentTimeMillis() + backoffMs));
         }
         // CAS 防止并发消费同一消息时覆盖
@@ -166,7 +178,7 @@ public class StockRestoreMsgConsumer {
                         .eq(OrderStockRestoreMsg::getId, msg.getId())
                         .eq(OrderStockRestoreMsg::getStatus, 0));
         if (affected == 0) {
-            log.info("消息 {} 已被其他线程处理，跳过", msg.getId());
+            LOGGER.info("消息 {} 已被其他线程处理，跳过", msg.getId());
         }
     }
 
@@ -182,6 +194,6 @@ public class StockRestoreMsgConsumer {
         orderStockRestoreMsgMapper.update(update,
                 new LambdaQueryWrapper<OrderStockRestoreMsg>()
                         .eq(OrderStockRestoreMsg::getId, id)
-                        .eq(OrderStockRestoreMsg::getStatus, 2));
+                        .eq(OrderStockRestoreMsg::getStatus, MSG_STATUS_FAILED));
     }
 }
