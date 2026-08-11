@@ -13,4 +13,7 @@ public interface UserRoleService extends IService<UserRole> {
 
     /** 给用户重新分配角色(先清空后批量插入),roleIds 为空则清空 */
     ResponseDto<Void> assignRoles(Integer userId, List<Integer> roleIds);
+
+    /** 查询用户拥有的按钮权限标识集合（去重，结果在 dataList） */
+    ResponseDto<String> listBtnPerms(Integer userId);
 }

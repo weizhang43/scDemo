@@ -1,12 +1,14 @@
 package com.example.scuser.controller;
 
 import com.curry.model.User;
+import com.curry.model.annotation.OpLog;
 import com.curry.model.auth.AuthConstant;
 import com.curry.model.auth.LoginUser;
 import com.example.scuser.dto.RegisterRequest;
 import com.example.scuser.service.TokenService;
 import com.example.scuser.service.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -137,7 +139,39 @@ public class UserController {
     }
 
     /**
-     * 按关键字、性别与生日区间分页查询用户列表。
+     * 管理员直接新增账号（任意用户类型，免验证码）。
+     */
+    @OpLog(module = "用户管理", type = OpLog.OpType.ADD, description = "新增用户")
+    @PostMapping("/add")
+    public ResponseDto<User> add(
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer opType,
+            @RequestBody User user) {
+        if (opType == null || opType != AuthConstant.U_TYPE_ADMIN) {
+            return ResponseDto.error("无权限");
+        }
+        return userService.addByAdmin(user);
+    }
+
+    /**
+     * 管理员逻辑删除用户，不允许删除自己。
+     */
+    @OpLog(module = "用户管理", type = OpLog.OpType.DELETE, description = "删除用户")
+    @DeleteMapping("/{id}")
+    public ResponseDto<User> delete(
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer opType,
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_ID, required = false) Integer opUId,
+            @PathVariable("id") Integer id) {
+        if (opType == null || opType != AuthConstant.U_TYPE_ADMIN) {
+            return ResponseDto.error("无权限");
+        }
+        if (opUId != null && opUId.equals(id)) {
+            return ResponseDto.error("不能删除当前登录账号");
+        }
+        return userService.deleteByAdmin(id);
+    }
+
+    /**
+     * 按关键字、性别、用户类型与生日区间分页查询用户列表。
      */
     @GetMapping("/list")
     public ResponseDto<User> list(
@@ -147,9 +181,10 @@ public class UserController {
             String birthdayStart,
             @RequestParam(value = "birthdayEnd", required = false, defaultValue = "")
             String birthdayEnd,
+            @RequestParam(value = "uType", required = false) Integer uType,
             @RequestParam("pageNo") int pageNo,
             @RequestParam("pageSize") int pageSize) {
-        return userService.queryUser(key, gender, birthdayStart, birthdayEnd, pageNo, pageSize);
+        return userService.queryUser(key, gender, birthdayStart, birthdayEnd, uType, pageNo, pageSize);
     }
 
     /**
@@ -186,7 +221,8 @@ public class UserController {
                         String birthdayStart,
                         @RequestParam(value = "birthdayEnd", required = false, defaultValue = "")
                         String birthdayEnd,
+                        @RequestParam(value = "uType", required = false) Integer uType,
                         HttpServletResponse response) throws Exception {
-        userService.export(key, gender, birthdayStart, birthdayEnd, response);
+        userService.export(key, gender, birthdayStart, birthdayEnd, uType, response);
     }
 }

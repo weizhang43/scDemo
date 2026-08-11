@@ -28,6 +28,11 @@ public class OperationLog {
     @ExcelProperty("用户名")
     private String uName;
 
+    /** 操作人真实姓名，查询时联 t_user 现取，不落库 */
+    @JsonProperty("realName")
+    @TableField(exist = false)
+    private String realName;
+
     @TableField("module")
     @ExcelProperty("模块")
     private String module;

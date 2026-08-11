@@ -3,6 +3,7 @@ package com.curry.model;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
@@ -45,4 +46,9 @@ public class User {
     @JsonProperty("uType")
     @TableField("u_type")
     private Integer uType;
+
+    /** 逻辑删除标志 0-正常 1-已删除，MyBatis-Plus 自动在 wrapper 查询/更新时过滤 */
+    @TableLogic
+    @TableField("deleted")
+    private Integer deleted;
 }

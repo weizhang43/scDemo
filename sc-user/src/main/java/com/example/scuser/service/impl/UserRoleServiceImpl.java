@@ -55,4 +55,12 @@ public class UserRoleServiceImpl extends ServiceImpl<UserRoleMapper, UserRole> i
         }
         return ResponseDto.success(null);
     }
+
+    @Override
+    public ResponseDto<String> listBtnPerms(Integer userId) {
+        if (userId == null) {
+            return ResponseDto.error("未登录");
+        }
+        return ResponseDto.success(baseMapper.selectBtnPermsByUserId(userId));
+    }
 }

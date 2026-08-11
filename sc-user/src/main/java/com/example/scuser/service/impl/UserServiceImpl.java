@@ -2,6 +2,7 @@ package com.example.scuser.service.impl;
 
 import com.alibaba.excel.EasyExcel;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.curry.model.User;
@@ -267,13 +268,96 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     }
 
     @Override
+    public ResponseDto<User> addByAdmin(User user) {
+        if (user == null) {
+            return ResponseDto.error("请求参数不能为空");
+        }
+        String error = validateAdminAddUser(user);
+        if (error != null) {
+            return ResponseDto.error(error);
+        }
+        if (user.getEmail() != null) {
+            user.setEmail(user.getEmail().trim());
+        }
+        user.setUId(null);
+        baseMapper.insert(user);
+        user.setPassword(null);
+        return ResponseDto.success(user);
+    }
+
+    /**
+     * 管理端新增账号校验：必填项、类型合法、用户名/手机号/邮箱唯一。
+     */
+    private String validateAdminAddUser(User user) {
+        Integer uType = user.getUType();
+        boolean typeAllowed = uType != null
+                && (uType == AuthConstant.U_TYPE_MERCHANT || uType == AuthConstant.U_TYPE_CUSTOMER
+                || uType == AuthConstant.U_TYPE_ADMIN);
+        if (user.getUName() == null || user.getUName().trim().isEmpty()) {
+            return "用户名不能为空";
+        }
+        if (user.getPassword() == null || user.getPassword().trim().isEmpty()) {
+            return "密码不能为空";
+        }
+        if (!typeAllowed) {
+            return "用户类型不合法";
+        }
+        if (!baseMapper.selectList(new LambdaQueryWrapper<User>()
+                .eq(User::getUName, user.getUName().trim())).isEmpty()) {
+            return "用户名已存在";
+        }
+        if (user.getPhone() != null && !user.getPhone().trim().isEmpty()
+                && !baseMapper.selectList(new LambdaQueryWrapper<User>()
+                .eq(User::getPhone, user.getPhone().trim())).isEmpty()) {
+            return "手机号已被注册";
+        }
+        String email = user.getEmail() == null ? "" : user.getEmail().trim();
+        if (!email.isEmpty()) {
+            if (!EMAIL_PATTERN.matcher(email).matches()) {
+                return "邮箱格式不正确";
+            }
+            if (!baseMapper.selectList(new LambdaQueryWrapper<User>()
+                    .eq(User::getEmail, email)).isEmpty()) {
+                return "邮箱已被注册";
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public ResponseDto<User> deleteByAdmin(Integer uId) {
+        if (uId == null) {
+            return ResponseDto.error("用户ID不能为空");
+        }
+        User exists = baseMapper.selectById(uId);
+        if (exists == null) {
+            return ResponseDto.error("用户不存在或已删除");
+        }
+        // u_name/phone 有唯一索引，逻辑删除前改名/置空，释放给后续注册使用
+        String suffix = "_del_" + uId;
+        String uName = exists.getUName() == null ? "" : exists.getUName();
+        int maxBaseLen = 64 - suffix.length();
+        if (uName.length() > maxBaseLen) {
+            uName = uName.substring(0, maxBaseLen);
+        }
+        baseMapper.update(null, new LambdaUpdateWrapper<User>()
+                .eq(User::getUId, uId)
+                .set(User::getUName, uName + suffix)
+                .set(User::getPhone, null));
+        baseMapper.deleteById(uId);
+        return ResponseDto.success(null);
+    }
+
+    @Override
     public ResponseDto<User> queryUser(String key, Integer gender, String birthdayStart,
-                                       String birthdayEnd, int pageNo, int pageSize) {
+                                       String birthdayEnd, Integer uType, int pageNo, int pageSize) {
         Page<User> page = new Page<>(pageNo, pageSize);
         LambdaQueryWrapper<User> queryWrapper = new LambdaQueryWrapper<User>()
                 .select(User::getUId, User::getUName, User::getRealName,
-                        User::getGender, User::getPhone, User::getBirthday, User::getEmail)
+                        User::getGender, User::getPhone, User::getBirthday,
+                        User::getEmail, User::getUType)
                 .eq(gender != null, User::getGender, gender)
+                .eq(uType != null, User::getUType, uType)
                 .ge(birthdayStart != null && !birthdayStart.isEmpty(), User::getBirthday, birthdayStart)
                 .le(birthdayEnd != null && !birthdayEnd.isEmpty(), User::getBirthday, birthdayEnd)
                 .and(w -> w.like(User::getUName, key)
@@ -446,11 +530,12 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
     @Override
     public void export(String key, Integer gender, String birthdayStart, String birthdayEnd,
-                       HttpServletResponse response) throws Exception {
+                       Integer uType, HttpServletResponse response) throws Exception {
         LambdaQueryWrapper<User> queryWrapper = new LambdaQueryWrapper<User>()
                 .select(User::getUId, User::getUName, User::getRealName,
                         User::getGender, User::getPhone, User::getBirthday, User::getEmail)
                 .eq(gender != null, User::getGender, gender)
+                .eq(uType != null, User::getUType, uType)
                 .ge(birthdayStart != null && !birthdayStart.isEmpty(), User::getBirthday, birthdayStart)
                 .le(birthdayEnd != null && !birthdayEnd.isEmpty(), User::getBirthday, birthdayEnd)
                 .orderByDesc(User::getUId);

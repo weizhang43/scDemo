@@ -25,10 +25,20 @@ public interface UserService extends IService<User> {
     ResponseDto<User> login(String uName, String password, Integer expectedUType);
 
     /**
+     * 管理员直接新增账号（任意用户类型，免验证码）
+     */
+    ResponseDto<User> addByAdmin(User user);
+
+    /**
+     * 管理员逻辑删除用户：用户名改为 原名_del_{uId}、手机号置空以释放唯一索引
+     */
+    ResponseDto<User> deleteByAdmin(Integer uId);
+
+    /**
      * 分页查询用户
      */
     ResponseDto<User> queryUser(String key, Integer gender, String birthdayStart,
-                                String birthdayEnd, int pageNo, int pageSize);
+                                String birthdayEnd, Integer uType, int pageNo, int pageSize);
 
     /**
      * 发送短信验证码（模拟）：根据手机号定位用户并生成验证码
@@ -59,5 +69,5 @@ public interface UserService extends IService<User> {
      * 按查询条件导出用户列表为 Excel（EasyExcel）
      */
     void export(String key, Integer gender, String birthdayStart, String birthdayEnd,
-                HttpServletResponse response) throws Exception;
+                Integer uType, HttpServletResponse response) throws Exception;
 }

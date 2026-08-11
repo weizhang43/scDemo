@@ -65,18 +65,10 @@ public class OperationLogServiceImpl extends ServiceImpl<OperationLogMapper, Ope
     public ResponseDto<OperationLog> page(Integer pageNum, Integer pageSize,
                                           String uName, String module, String opType,
                                           Integer status, String beginTime, String endTime) {
-        LambdaQueryWrapper<OperationLog> wrapper = new LambdaQueryWrapper<OperationLog>()
-                .like(StringUtils.hasText(uName), OperationLog::getUName, uName)
-                .eq(StringUtils.hasText(module), OperationLog::getModule, module)
-                .eq(StringUtils.hasText(opType), OperationLog::getOpType, opType)
-                .eq(status != null, OperationLog::getStatus, status)
-                .ge(StringUtils.hasText(beginTime), OperationLog::getCreateTime, beginTime)
-                .le(StringUtils.hasText(endTime), OperationLog::getCreateTime, endTime)
-                .orderByDesc(OperationLog::getLogId);
-        Page<OperationLog> page = baseMapper.selectPage(
-                new Page<>(pageNum == null ? DEFAULT_PAGE_NUM : pageNum,
-                        pageSize == null ? DEFAULT_PAGE_SIZE : pageSize), wrapper);
-        return ResponseDto.success(page);
+        Page<OperationLog> page = new Page<>(pageNum == null ? DEFAULT_PAGE_NUM : pageNum,
+                pageSize == null ? DEFAULT_PAGE_SIZE : pageSize);
+        return ResponseDto.success(baseMapper.selectPageWithRealName(
+                page, uName, module, opType, status, beginTime, endTime));
     }
 
     @Override
