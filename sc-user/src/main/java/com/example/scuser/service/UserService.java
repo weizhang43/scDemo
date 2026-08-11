@@ -20,9 +20,9 @@ public interface UserService extends IService<User> {
     ResponseDto<User> sendEmailCode(String email);
 
     /**
-     * 用户登录
+     * 用户登录。expectedUType 非空时校验账号类型与登录入口一致，不一致直接拒绝。
      */
-    ResponseDto<User> login(String uName, String password);
+    ResponseDto<User> login(String uName, String password, Integer expectedUType);
 
     /**
      * 分页查询用户

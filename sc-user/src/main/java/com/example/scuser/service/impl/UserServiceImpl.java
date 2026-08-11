@@ -227,7 +227,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     }
 
     @Override
-    public ResponseDto<User> login(String uName, String password) {
+    public ResponseDto<User> login(String uName, String password, Integer expectedUType) {
         // TODO 密码当前为明文存储/明文比对，应迁移为加盐哈希（如 BCrypt）存储后再改造比对逻辑；
         //  为不破坏存量数据，此处仅改为先按用户名查询、在应用层比对密码，避免把明文密码拼进查询条件
         LambdaQueryWrapper<User> queryWrapper = new LambdaQueryWrapper<User>()
@@ -237,6 +237,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         if (user == null || user.getPassword() == null || !user.getPassword().equals(password)) {
             return ResponseDto.error("用户名或密码错误");
         }
+        if (expectedUType != null && !expectedUType.equals(user.getUType())) {
+            return ResponseDto.error("该账号不是" + uTypeName(expectedUType) + "账号，请从"
+                    + uTypeName(user.getUType()) + "入口登录");
+        }
         String token = "token-" + user.getUId() + "-" + System.currentTimeMillis();
         Map<String, Object> data = new HashMap<>();
         data.put("token", token);
@@ -244,6 +248,22 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         user.setPassword(null);
         data.put("user", user);
         return ResponseDto.success(data);
+    }
+
+    private String uTypeName(Integer uType) {
+        if (uType == null) {
+            return "未知";
+        }
+        switch (uType) {
+            case AuthConstant.U_TYPE_MERCHANT:
+                return "商家";
+            case AuthConstant.U_TYPE_CUSTOMER:
+                return "顾客";
+            case AuthConstant.U_TYPE_ADMIN:
+                return "管理员";
+            default:
+                return "未知";
+        }
     }
 
     @Override

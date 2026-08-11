@@ -45,11 +45,13 @@ public class UserController {
 
     /**
      * 用户登录：校验用户名密码后签发 token 并写入 Redis 会话。
+     * uType 为登录入口选择的角色，传入时会校验账号类型是否一致。
      */
     @PostMapping("/login")
     public ResponseDto<User> login(@RequestParam("uName") String uName,
-                                  @RequestParam("password") String password) {
-        ResponseDto<User> result = userService.login(uName, password);
+                                  @RequestParam("password") String password,
+                                  @RequestParam(value = "uType", required = false) Integer uType) {
+        ResponseDto<User> result = userService.login(uName, password, uType);
         boolean success = ResponseDto.SUCCESS_CODE.equals(result.getCode())
                 && result.getDaoResult() != null;
         if (success) {
