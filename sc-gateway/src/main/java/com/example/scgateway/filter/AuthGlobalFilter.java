@@ -90,7 +90,7 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
 
     /**
      * 全局鉴权入口。执行流程：
-     * 1. 命中白名单或图片直连放行规则的请求直接放行；
+     * 1. 命中白名单或图片直连放行规则的请求走「尽力鉴权」：带合法 token 则注入用户身份，否则匿名放行；
      * 2. 其余请求进入 token/会话校验链路，任一环节失败均返回 401。
      */
     @Override
@@ -98,11 +98,58 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
         ServerHttpRequest request = exchange.getRequest();
         String path = request.getURI().getPath();
         String method = request.getMethod() == null ? METHOD_GET : request.getMethod().name();
-        // 白名单与图片直连请求无需鉴权，直接进入后续过滤器链
         if (isWhitelisted(path) || isImagePassThrough(path, method)) {
-            return chain.filter(exchange);
+            return relayOptionalAuth(exchange, chain);
         }
         return authenticate(exchange, chain, path);
+    }
+
+    /**
+     * 白名单路径的尽力鉴权：登录用户访问白名单接口（如 /product/pageQuery）时
+     * 下游也需要知道身份（商家只看自己的商品），因此 token 合法则照常注入 X-User-* 头；
+     * 无 token 或校验失败一律匿名放行，不影响游客访问。
+     * 无论哪种结果，都先剥离客户端自带的 X-User-* 头，防止白名单路径伪造身份。
+     */
+    private Mono<Void> relayOptionalAuth(ServerWebExchange exchange, GatewayFilterChain chain) {
+        ServerWebExchange sanitized = stripUserHeaders(exchange);
+        String auth = sanitized.getRequest().getHeaders().getFirst(AuthConstant.HEADER_AUTHORIZATION);
+        if (auth == null || !auth.startsWith(AuthConstant.BEARER_PREFIX)) {
+            return chain.filter(sanitized);
+        }
+        String token = auth.substring(AuthConstant.BEARER_PREFIX.length()).trim();
+        Map<String, Object> payload = JwtUtil.verify(token);
+        if (payload == null || !(payload.get(KEY_U_ID) instanceof Number)) {
+            return chain.filter(sanitized);
+        }
+        Integer uId = ((Number) payload.get(KEY_U_ID)).intValue();
+        String redisKey = AuthConstant.buildTokenKey(uId, token);
+        // 注意不能用 flatMap + switchIfEmpty：chain.filter() 的 Mono<Void> 本身以空完成，
+        // 会再次触发 switchIfEmpty 导致请求被二次转发挂死。用 defaultIfEmpty 把空值实体化。
+        return stringRedisTemplate.opsForValue().get(redisKey)
+                .defaultIfEmpty("")
+                .flatMap(raw -> {
+                    Map<String, Object> data = parseMap(raw);
+                    if (data == null || data.get(KEY_U_ID) == null || !(data.get("uType") instanceof Number)) {
+                        return chain.filter(sanitized);
+                    }
+                    return relayWithUserHeaders(sanitized, chain, redisKey, data);
+                });
+    }
+
+    /**
+     * 剥离客户端自带的 X-User-* 请求头。鉴权链路里 mutate().header() 会整体覆盖，
+     * 但白名单匿名放行时请求原样透传，必须显式移除，否则可伪造身份。
+     */
+    private ServerWebExchange stripUserHeaders(ServerWebExchange exchange) {
+        ServerHttpRequest stripped = exchange.getRequest().mutate()
+                .headers(h -> {
+                    h.remove(AuthConstant.HEADER_X_USER_ID);
+                    h.remove(AuthConstant.HEADER_X_USER_NAME);
+                    h.remove(AuthConstant.HEADER_X_REAL_NAME);
+                    h.remove(AuthConstant.HEADER_X_USER_TYPE);
+                })
+                .build();
+        return exchange.mutate().request(stripped).build();
     }
 
     /**

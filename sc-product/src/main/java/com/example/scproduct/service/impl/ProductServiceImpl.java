@@ -203,8 +203,8 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
         }
         Integer merchantId = scope.getMerchantId();
         if (merchantId != null) {
-            // merchant_id IS NULL 是存量公共商品，任何商家可见可管
-            wrapper.and(w -> w.eq(Product::getMerchantId, merchantId).or().isNull(Product::getMerchantId));
+            // 严格归属：商家只能看到自己的商品，merchant_id IS NULL 的存量公共商品仅管理员可见可管
+            wrapper.eq(Product::getMerchantId, merchantId);
         }
     }
 
