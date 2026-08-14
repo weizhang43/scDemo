@@ -3,6 +3,8 @@ package com.example.scorder.dto;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 
+import java.util.List;
+
 /**
  * 发表评价的请求体。
  * 不含 uId —— 身份只从网关注入的 X-User-Id 取，不采信前端（同 CartAddRequest）。
@@ -21,4 +23,7 @@ public class ReviewSubmitRequest {
 
     /** 文字评论，可为空 —— 只打星不写字也算一次有效评价 */
     private String content;
+
+    /** 评价图片相对URL，最多3张，可为空 */
+    private List<String> images;
 }

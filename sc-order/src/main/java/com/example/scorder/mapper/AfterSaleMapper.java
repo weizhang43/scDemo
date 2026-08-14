@@ -17,7 +17,7 @@ public interface AfterSaleMapper extends BaseMapper<AfterSale> {
      */
     @Select({
             "<script>",
-            "SELECT a.id, a.o_id, a.u_id, a.type, a.reason, a.status, a.reject_reason,",
+            "SELECT a.id, a.o_id, a.u_id, a.type, a.reason, a.images, a.status, a.reject_reason,",
             "       a.refund_no, a.refund_amount, a.create_time, a.audit_time, a.refund_time,",
             "       o.order_no, u.u_name",
             "FROM t_after_sale a",
@@ -42,12 +42,13 @@ public interface AfterSaleMapper extends BaseMapper<AfterSale> {
      * 重新申请：被拒绝(3)/已取消(4)的工单复用同一行回到待审核，
      * 唯一键 uk_o_id 限制一单一工单，不再插新行。
      */
-    @Update("UPDATE t_after_sale SET status=0, type=#{type}, reason=#{reason}, reject_reason=NULL, " +
+    @Update("UPDATE t_after_sale SET status=0, type=#{type}, reason=#{reason}, images=#{images}, reject_reason=NULL, " +
             "refund_no=NULL, audit_time=NULL, refund_time=NULL, refund_amount=#{refundAmount}, " +
             "create_time=NOW(), update_time=NOW(), version=version+1 " +
             "WHERE o_id=#{oId} AND u_id=#{uId} AND status IN (3, 4)")
     int reapply(@Param("oId") Integer oId, @Param("uId") Integer uId,
                 @Param("type") Integer type, @Param("reason") String reason,
+                @Param("images") String images,
                 @Param("refundAmount") java.math.BigDecimal refundAmount);
 
     /** 顾客撤销申请：CAS 0→4 */

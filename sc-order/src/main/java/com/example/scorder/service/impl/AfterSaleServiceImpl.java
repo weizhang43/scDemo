@@ -16,6 +16,7 @@ import com.example.scorder.mapper.OrderMapper;
 import com.example.scorder.mapper.OrderStockRestoreMsgMapper;
 import com.example.scorder.mapper.PayRecordMapper;
 import com.example.scorder.service.AfterSaleService;
+import com.example.scorder.util.ImageUrlUtil;
 import exception.BusinessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,6 +48,9 @@ public class AfterSaleServiceImpl extends ServiceImpl<AfterSaleMapper, AfterSale
 
     /** 拒绝原因最大长度 */
     private static final int REJECT_REASON_MAX_LENGTH = 200;
+
+    /** 凭证图片最多张数 */
+    private static final int IMAGES_MAX_COUNT = 3;
 
     /** 退款兜底重试单批扫描条数 */
     private static final int RETRY_BATCH_SIZE = 50;
@@ -89,7 +93,7 @@ public class AfterSaleServiceImpl extends ServiceImpl<AfterSaleMapper, AfterSale
             // 唯一键 uk_o_id 是权威判据：被拒绝/已取消的工单允许复用同一行重新申请
             LOGGER.info("售后订单 {} 已有工单，尝试复用重新申请", order.getOId(), e);
             int rows = afterSaleMapper.reapply(order.getOId(), uId,
-                    record.getType(), reason, order.getOrderAmount());
+                    record.getType(), reason, record.getImages(), order.getOrderAmount());
             if (rows == 0) {
                 return ResponseDto.error("该订单已有售后申请在处理中，请勿重复提交");
             }
@@ -139,6 +143,7 @@ public class AfterSaleServiceImpl extends ServiceImpl<AfterSaleMapper, AfterSale
         record.setUId(uId);
         record.setType(request.getType() == null ? AfterSale.TYPE_REFUND : request.getType());
         record.setReason(reason);
+        record.setImages(ImageUrlUtil.validateAndJoin(request.getImages(), IMAGES_MAX_COUNT));
         record.setStatus(AfterSale.STATUS_PENDING);
         record.setRefundAmount(order.getOrderAmount());
         record.setCreateTime(new Date());

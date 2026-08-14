@@ -54,6 +54,10 @@ public class ProductReview {
     @TableField("content")
     private String content;
 
+    /** 评价图片，最多3张，逗号分隔的相对URL（/product/image/xxx），可为空 */
+    @TableField("images")
+    private String images;
+
     @TableField("create_time")
     private Date createTime;
 }

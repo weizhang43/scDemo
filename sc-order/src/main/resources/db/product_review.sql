@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS `t_product_review` (
   `p_name` VARCHAR(128) DEFAULT NULL COMMENT '商品名快照（取自订单明细）',
   `rating` TINYINT NOT NULL COMMENT '星级 1-5',
   `content` VARCHAR(500) DEFAULT NULL COMMENT '文字评论，可为空（只打星不写字也算一次评价）',
+  `images` VARCHAR(512) DEFAULT NULL COMMENT '评价图片，最多3张，逗号分隔的相对URL',
   `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '评价时间',
   PRIMARY KEY (`id`),
   -- 按「订单+商品」各评一次：同一件商品买两单可以各评一次，同一单里不能刷评
@@ -18,6 +19,9 @@ CREATE TABLE IF NOT EXISTS `t_product_review` (
 
 -- 已建过带 u_name 的旧版本时补执行一次：
 -- ALTER TABLE `t_product_review` DROP COLUMN `u_name`;
+
+-- 已建过不带 images 的旧版本时补执行一次：
+-- ALTER TABLE `t_product_review` ADD COLUMN `images` VARCHAR(512) DEFAULT NULL COMMENT '评价图片，最多3张，逗号分隔的相对URL' AFTER `content`;
 
 -- 不存用户名快照，只存 u_id：展示名在查询时 LEFT JOIN t_user 现取（同 OrderMapper 处理 add_person 的做法）。
 -- 这样用户改名后评价区跟着变，也不必让中文名途经只允许 ASCII 的 HTTP 头——途经会被写成问号。

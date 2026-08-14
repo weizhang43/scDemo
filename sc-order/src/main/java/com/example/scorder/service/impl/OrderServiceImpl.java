@@ -51,7 +51,10 @@ import response.ResponseDto;
 import javax.servlet.http.HttpServletResponse;
 import java.io.Serializable;
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -231,7 +234,34 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         Page<Order> page = new Page<>(query.getPageNo(), query.getPageSize());
         orderMapper.selectPageWithUserName(page, query.getKey(), query.getOrderNo(), query.getOrderStatus(),
                 query.getCreateTimeStart(), query.getCreateTimeEnd(), scope.getOwnerUId());
+        fillPageOrderItems(page.getRecords());
         return ResponseDto.success(page);
+    }
+
+    /**
+     * 给分页结果批量回填订单商品明细（含商品主图），一次 IN 查询避免 N+1。
+     * 明细查询失败只记日志不影响列表主体返回。
+     */
+    private void fillPageOrderItems(List<Order> orders) {
+        if (orders == null || orders.isEmpty()) {
+            return;
+        }
+        try {
+            List<Integer> oIds = new ArrayList<>(orders.size());
+            for (Order order : orders) {
+                oIds.add(order.getOId());
+            }
+            List<OrderItem> items = orderItemMapper.selectByOIdsWithImage(oIds);
+            Map<Integer, List<OrderItem>> grouped = new HashMap<>(orders.size());
+            for (OrderItem item : items) {
+                grouped.computeIfAbsent(item.getOId(), k -> new ArrayList<>()).add(item);
+            }
+            for (Order order : orders) {
+                fillSubtotal(order, grouped.get(order.getOId()));
+            }
+        } catch (Exception e) {
+            LOGGER.warn("批量查询订单商品明细失败", e);
+        }
     }
 
     /**
@@ -551,10 +581,10 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         if (order == null) {
             return null;
         }
-        // 关联查询订单商品明细，填入 orderItems 供前端展示
+        // 关联查询订单商品明细（含商品主图），填入 orderItems 供前端展示
         try {
-            List<OrderItem> items = orderItemMapper.selectList(
-                    new LambdaQueryWrapper<OrderItem>().eq(OrderItem::getOId, order.getOId()));
+            List<OrderItem> items = orderItemMapper.selectByOIdsWithImage(
+                    Collections.singletonList(order.getOId()));
             fillSubtotal(order, items);
         } catch (Exception e) {
             LOGGER.warn("查询订单商品明细失败 oId={}", order.getOId(), e);

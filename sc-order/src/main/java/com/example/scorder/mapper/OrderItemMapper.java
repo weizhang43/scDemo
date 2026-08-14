@@ -27,6 +27,20 @@ public interface OrderItemMapper extends BaseMapper<OrderItem> {
     int insertBatch(@Param("list") List<OrderItem> list);
 
     /**
+     * 批量查询多个订单的商品明细并联表带出商品主图（订单列表商品卡片用）。
+     * 商品被删时 LEFT JOIN 出 null，前端回落占位图。
+     */
+    @Select({"<script>",
+            "SELECT i.id, i.o_id, i.p_id, i.p_name, i.price, i.quantity, p.image_url",
+            "FROM t_order_item i",
+            "LEFT JOIN t_product p ON p.p_id = i.p_id",
+            "WHERE i.o_id IN",
+            "<foreach collection='oIds' item='oId' open='(' separator=',' close=')'>#{oId}</foreach>",
+            "ORDER BY i.o_id, i.id",
+            "</script>"})
+    List<OrderItem> selectByOIdsWithImage(@Param("oIds") List<Integer> oIds);
+
+    /**
      * 商品销量排行：按商品聚合购买数量，仅统计已下单(1)/已完成(2)的订单。
      * 只按 p_id 分组——p_name 是每单快照，商品改名后同一商品会被拆成多行，故用 MAX 取一个。
      * merchantId 非 null 时只统计该商家商品与公共商品（商家工作台热销榜用）。

@@ -3,6 +3,8 @@ package com.example.scorder.dto;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 
+import java.util.List;
+
 @Data
 public class AfterSaleApplyRequest {
 
@@ -13,4 +15,7 @@ public class AfterSaleApplyRequest {
     private Integer type;
 
     private String reason;
+
+    /** 凭证图片相对URL，最多3张，可为空 */
+    private List<String> images;
 }

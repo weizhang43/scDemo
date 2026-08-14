@@ -19,7 +19,7 @@ public interface ProductReviewMapper extends BaseMapper<ProductReview> {
      * 用户被删时 LEFT JOIN 出 null，前端回落「匿名用户」+ 首字母圆。
      */
     @Select({
-            "SELECT r.id, r.u_id, r.o_id, r.p_id, r.p_name, r.rating, r.content, r.create_time,",
+            "SELECT r.id, r.u_id, r.o_id, r.p_id, r.p_name, r.rating, r.content, r.images, r.create_time,",
             "       u.real_name as uName, u.avatar AS u_avatar",
             "FROM t_product_review r",
             "LEFT JOIN t_user u ON r.u_id = u.u_id",

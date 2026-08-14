@@ -12,6 +12,7 @@ import com.example.scorder.mapper.OrderItemMapper;
 import com.example.scorder.mapper.OrderMapper;
 import com.example.scorder.mapper.ProductReviewMapper;
 import com.example.scorder.service.ReviewService;
+import com.example.scorder.util.ImageUrlUtil;
 import com.example.scorder.vo.ProductReviewSummaryVO;
 import exception.BusinessException;
 import org.slf4j.Logger;
@@ -45,6 +46,9 @@ public class ReviewServiceImpl extends ServiceImpl<ProductReviewMapper, ProductR
 
     /** 评分上限（5 星） */
     private static final int RATING_MAX = 5;
+
+    /** 评价图片最多张数 */
+    private static final int IMAGES_MAX_COUNT = 3;
 
     @Autowired
     private ProductReviewMapper reviewMapper;
@@ -124,6 +128,7 @@ public class ReviewServiceImpl extends ServiceImpl<ProductReviewMapper, ProductR
         review.setPName(item.getPName());
         review.setRating(req.getRating());
         review.setContent(content == null || content.isEmpty() ? null : content);
+        review.setImages(ImageUrlUtil.validateAndJoin(req.getImages(), IMAGES_MAX_COUNT));
         review.setCreateTime(new Date());
         return review;
     }

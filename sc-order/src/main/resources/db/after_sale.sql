@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS `t_after_sale` (
   `u_id` INT NOT NULL COMMENT '申请人ID（取自网关注入的 X-User-Id，不采信前端）',
   `type` TINYINT NOT NULL DEFAULT 1 COMMENT '售后类型 1:退货退款（2:换货 预留）',
   `reason` VARCHAR(500) NOT NULL COMMENT '申请原因',
+  `images` VARCHAR(512) DEFAULT NULL COMMENT '凭证图片，最多3张，逗号分隔的相对URL',
   `status` TINYINT NOT NULL DEFAULT 0 COMMENT '0:待审核 1:同意退款中 2:已退款 3:已拒绝 4:已取消',
   `reject_reason` VARCHAR(200) DEFAULT NULL COMMENT '拒绝原因',
   `refund_no` VARCHAR(64) DEFAULT NULL COMMENT '退款依据的支付单号（t_pay_record.pay_no）',
@@ -29,3 +30,6 @@ CREATE TABLE IF NOT EXISTS `t_after_sale` (
 -- 3. order_no / u_name 等展示字段不落库，查询时联 t_order / t_user 现取。
 -- 4. 库存回补复用 t_order_stock_restore_msg（source=1），退款走已有 MockPayGatewayClient，
 --    支付单 1(成功)→4(待退款)→5(已退款)；退款失败工单停在 1，由 sc-job retryAfterSaleRefund 重试。
+
+-- 已建过不带 images 的旧版本时补执行一次：
+-- ALTER TABLE `t_after_sale` ADD COLUMN `images` VARCHAR(512) DEFAULT NULL COMMENT '凭证图片，最多3张，逗号分隔的相对URL' AFTER `reason`;

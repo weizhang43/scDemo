@@ -54,6 +54,10 @@ public class AfterSale {
     @TableField("reason")
     private String reason;
 
+    /** 凭证图片，最多3张，逗号分隔的相对URL（/product/image/xxx），可为空 */
+    @TableField("images")
+    private String images;
+
     @TableField("status")
     private Integer status;
 

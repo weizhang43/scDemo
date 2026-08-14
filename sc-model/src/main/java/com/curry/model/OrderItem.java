@@ -34,4 +34,8 @@ public class OrderItem {
 
     @TableField(exist = false)
     private BigDecimal subtotal;
+
+    /** 商品主图，不落库：联 t_product 现取，供订单列表/详情展示商品卡片 */
+    @TableField(exist = false)
+    private String imageUrl;
 }
