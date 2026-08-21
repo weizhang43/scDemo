@@ -82,3 +82,4 @@ spring:
 inner:
   auth:
     token: ${SC_INNER_TOKEN:sc-inner-token-dev}
+

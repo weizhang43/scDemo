@@ -84,6 +84,8 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
             "/user/workReport/**",
             // 个人工作页（学习计划）：登录页入口，免登录访问；其中 /job/** 由 X-Inner-Token 自行校验
             "/user/studyPlan/**",
+            // 个人工作页（知识速记）：登录页入口，免登录访问
+            "/user/knowledge/**",
             "/product/pageQuery",
             "/product/category/tree",
             // 游客浏览商品时查看评价列表（该路径只有 GET 映射）
