@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS `t_knowledge_note` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
   `knowledge_id` BIGINT NOT NULL COMMENT '知识点ID',
   `content` TEXT NOT NULL COMMENT '笔记内容',
+  `important` TINYINT NOT NULL DEFAULT 0 COMMENT '是否重点 0-否 1-是',
   `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '添加时间',
   PRIMARY KEY (`id`),
   KEY `idx_knowledge_id` (`knowledge_id`)

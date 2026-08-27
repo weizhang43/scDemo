@@ -24,6 +24,10 @@ public class KnowledgeNote {
     @TableField("content")
     private String content;
 
+    /** 是否重点 0-否 1-是 */
+    @TableField("important")
+    private Integer important;
+
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "GMT+8")
     @JsonProperty("createTime")
     @TableField("create_time")
