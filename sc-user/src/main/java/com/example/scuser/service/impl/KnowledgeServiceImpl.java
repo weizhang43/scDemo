@@ -62,7 +62,7 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeMapper, Knowledge
         if (!StringUtils.hasText(knowledge.getAnswer())) {
             return ResponseDto.error("答案不能为空");
         }
-        if (knowledge.getTag() == null || knowledge.getTag() < 1 || knowledge.getTag() > 7) {
+        if (knowledge.getTag() == null || knowledge.getTag() < 1 || knowledge.getTag() > 12) {
             return ResponseDto.error("标签不合法");
         }
         Date now = new Date();

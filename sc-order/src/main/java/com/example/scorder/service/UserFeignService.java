@@ -22,6 +22,11 @@ public interface UserFeignService {
     @GetMapping("/user/address/{aId}")
     ResponseDto<Address> getAddress(@PathVariable("aId") Integer aId);
 
+    /**
+     * 查询当前登录用户的按钮权限标识集合。
+     */
+    @GetMapping("/user/userRole/perms")
+    ResponseDto<String> myPerms();
 
     @PostMapping("/user/mail/sendMail")
     ResponseDto sendMail(@RequestBody @Validated OrderMessage orderMessage);

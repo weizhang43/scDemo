@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS `t_knowledge` (
   `answer` LONGTEXT NULL COMMENT '答案（富文本HTML）',
   `add_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '添加时间',
   `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态 1-正常 2-已收藏',
-  `tag` TINYINT NOT NULL DEFAULT 1 COMMENT '标签 1-Java基础与核心特性 2-集合框架与数据结构 3-并发编程与多线程 4-JVM与性能调优 5-Spring全家桶 6-数据库与缓存 7-消息队列与分布式',
+  `tag` TINYINT NOT NULL DEFAULT 1 COMMENT '标签 1-Java基础与核心特性 2-Java集合与数据结构 3-Java多线程与JUC 4-JVM与性能调优 5-Spring全家桶框架 6-MyBatis与MyBatis-Plus 7-数据库与缓存 8-微服务架构 9-消息队列 10-ES搜索引擎 11-前端Vue知识 12-项目实战',
   `del_flag` TINYINT NOT NULL DEFAULT 0 COMMENT '是否删除 0-否 1-是（忽略的试题逻辑删除）',
   `view_count` INT NOT NULL DEFAULT 0 COMMENT '查看次数（查看进度）',
   `last_view_time` DATETIME NULL COMMENT '最后查看时间',

@@ -27,7 +27,7 @@ public class Knowledge {
     @TableField("status")
     private Integer status;
 
-    /** 标签 1-Java基础与核心特性 2-集合框架与数据结构 3-并发编程与多线程 4-JVM与性能调优 5-Spring全家桶 6-数据库与缓存 7-消息队列与分布式 */
+    /** 标签 1-Java基础与核心特性 2-Java集合与数据结构 3-Java多线程与JUC 4-JVM与性能调优 5-Spring全家桶框架 6-MyBatis与MyBatis-Plus 7-数据库与缓存 8-微服务架构 9-消息队列 10-ES搜索引擎 11-前端Vue知识 12-项目实战 */
     @TableField("tag")
     private Integer tag;
 
