@@ -20,7 +20,7 @@ spring:
   profiles:
     # 环境配置
     active: test
-    include: mq,rocketmq
+    include: mq
   cloud:
     nacos:
       discovery:
