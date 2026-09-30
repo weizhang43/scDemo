@@ -34,6 +34,10 @@ public class Notice {
     @TableField("sort_order")
     private Integer sortOrder;
 
+    @JsonProperty("targetTypes")
+    @TableField("target_types")
+    private Integer targetTypes;
+
     @JsonProperty("createBy")
     @TableField("create_by")
     private Integer createBy;

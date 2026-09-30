@@ -20,19 +20,33 @@ public class NoticeController {
     public ResponseDto<Notice> page(@RequestParam(value = "pageNum", defaultValue = "1") Integer pageNum,
                                     @RequestParam(value = "pageSize", defaultValue = "10") Integer pageSize,
                                     @RequestParam(value = "title", required = false) String title,
-                                    @RequestParam(value = "status", required = false) Integer status) {
+                                    @RequestParam(value = "status", required = false) Integer status,
+                                    @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer uType) {
+        if (!isAdmin(uType)) return ResponseDto.error("无权限");
         return noticeService.pageQuery(pageNum, pageSize, title, status);
     }
 
     /** 首页轮播：已发布的通知 */
     @GetMapping("/list")
-    public ResponseDto<Notice> list() {
-        return noticeService.listPublished();
+    public ResponseDto<Notice> list(
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer uType) {
+        return noticeService.listPublished(uType);
+    }
+
+    @GetMapping("/login-list")
+    public ResponseDto<Notice> loginList(@RequestParam("uType") Integer uType) {
+        if (uType == null || (uType != AuthConstant.U_TYPE_MERCHANT
+                && uType != AuthConstant.U_TYPE_CUSTOMER
+                && uType != AuthConstant.U_TYPE_ADMIN)) {
+            return ResponseDto.error("通知对象无效");
+        }
+        return noticeService.listPublished(uType);
     }
 
     @GetMapping("/{noticeId}")
-    public ResponseDto<Notice> get(@PathVariable("noticeId") Long noticeId) {
-        return noticeService.getDetail(noticeId);
+    public ResponseDto<Notice> get(@PathVariable("noticeId") Long noticeId,
+                                   @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer uType) {
+        return noticeService.getDetail(noticeId, uType);
     }
 
     @OpLog(module = "通知管理", type = OpLog.OpType.ADD, description = "新增通知")
@@ -41,26 +55,38 @@ public class NoticeController {
                                    @RequestHeader(value = AuthConstant.HEADER_X_USER_ID, required = false)
                                    Integer uId,
                                    @RequestHeader(value = AuthConstant.HEADER_X_USER_NAME, required = false)
-                                   String uName) {
+                                   String uName,
+                                   @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer uType) {
+        if (!isAdmin(uType)) return ResponseDto.error("无权限");
         return noticeService.addNotice(notice, uId, uName);
     }
 
     @OpLog(module = "通知管理", type = OpLog.OpType.UPDATE, description = "修改通知")
     @PutMapping
-    public ResponseDto<Notice> update(@RequestBody Notice notice) {
+    public ResponseDto<Notice> update(@RequestBody Notice notice,
+                                      @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer uType) {
+        if (!isAdmin(uType)) return ResponseDto.error("无权限");
         return noticeService.updateNotice(notice);
     }
 
     @OpLog(module = "通知管理", type = OpLog.OpType.DELETE, description = "删除通知")
     @DeleteMapping("/{noticeId}")
-    public ResponseDto<Notice> delete(@PathVariable("noticeId") Long noticeId) {
+    public ResponseDto<Notice> delete(@PathVariable("noticeId") Long noticeId,
+                                      @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer uType) {
+        if (!isAdmin(uType)) return ResponseDto.error("无权限");
         return noticeService.removeNotice(noticeId);
     }
 
     @OpLog(module = "通知管理", type = OpLog.OpType.UPDATE, description = "切换通知状态")
     @PostMapping("/status")
     public ResponseDto<Notice> changeStatus(@RequestParam("noticeId") Long noticeId,
-                                            @RequestParam("status") Integer status) {
+                                            @RequestParam("status") Integer status,
+                                            @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer uType) {
+        if (!isAdmin(uType)) return ResponseDto.error("无权限");
         return noticeService.changeStatus(noticeId, status);
+    }
+
+    private boolean isAdmin(Integer uType) {
+        return uType != null && uType == AuthConstant.U_TYPE_ADMIN;
     }
 }

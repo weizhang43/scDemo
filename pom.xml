@@ -183,6 +183,26 @@
     <!-- 全部微服务子模块（除 sc-model 外）共用的依赖，profile 方式无法区分，直接放在各子模块中的：
          nacos-discovery / nacos-config / bootstrap 由各服务模块声明（sc-model 纯实体 jar 不需要） -->
 
+    <profiles>
+        <!-- 开发环境（默认，mvn spring-boot:run 或 IDE 运行） -->
+        <profile>
+            <id>dev</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <properties>
+                <spring.profile>dev</spring.profile>
+            </properties>
+        </profile>
+        <!-- 测试/生产环境（mvn clean package -Ptest） -->
+        <profile>
+            <id>test</id>
+            <properties>
+                <spring.profile>test</spring.profile>
+            </properties>
+        </profile>
+    </profiles>
+
     <build>
         <!-- 仅管理插件版本；sc-model 为纯 jar 无 main 类，不能全局强制 repackage，
              各可运行子模块自行声明 spring-boot-maven-plugin -->
@@ -194,6 +214,14 @@
                 </plugin>
             </plugins>
         </pluginManagement>
+
+        <!-- 资源过滤：替换 bootstrap.yml 中的占位符 -->
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+            </resource>
+        </resources>
     </build>
 
 </project>

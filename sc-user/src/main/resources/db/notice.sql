@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS `t_notice` (
   `cover_image` VARCHAR(255) NULL COMMENT '封面图URL（用于首页轮播）',
   `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态 1-发布 0-草稿/下架',
   `sort_order` INT NOT NULL DEFAULT 0 COMMENT '轮播排序，值大靠前',
+  `target_types` TINYINT NULL COMMENT '通知对象位掩码：商家1 顾客2 管理员4；NULL为全部',
   `create_by` INT NULL COMMENT '创建人ID',
   `create_name` VARCHAR(64) NULL COMMENT '创建人用户名',
   `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',

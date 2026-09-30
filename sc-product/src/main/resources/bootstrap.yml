@@ -18,8 +18,8 @@ spring:
       maximum-pool-size: 16
       minimum-idle: 4
   profiles:
-    # 环境配置
-    active: test
+    # 环境配置（通过 Maven Profile 切换：dev 开发环境 / test 部署环境）
+    active: @spring.profile@
   cloud:
     sentinel:
       # 取消控制台懒加载，启动即初始化

@@ -1,12 +1,15 @@
 package com.example.scuser.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.curry.model.Notice;
+import com.curry.model.auth.AuthConstant;
 import com.example.scuser.mapper.NoticeMapper;
 import com.example.scuser.service.NoticeService;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import response.ResponseDto;
 
@@ -24,6 +27,27 @@ public class NoticeServiceImpl extends ServiceImpl<NoticeMapper, Notice> impleme
 
     /** 通知状态：已发布 */
     private static final int STATUS_PUBLISHED = 1;
+    private static final int ALL_TARGET_MASK = 7;
+
+    private static int audienceBit(Integer uType) {
+        if (uType == null) return 0;
+        switch (uType) {
+            case AuthConstant.U_TYPE_MERCHANT: return 1;
+            case AuthConstant.U_TYPE_CUSTOMER: return 2;
+            case AuthConstant.U_TYPE_ADMIN: return 4;
+            default: return 0;
+        }
+    }
+
+    private static boolean canView(Notice notice, Integer uType) {
+        int bit = audienceBit(uType);
+        return notice.getStatus() != null && notice.getStatus() == STATUS_PUBLISHED
+                && (notice.getTargetTypes() == null || (bit != 0 && (notice.getTargetTypes() & bit) != 0));
+    }
+
+    private static boolean invalidTargetTypes(Integer targetTypes) {
+        return targetTypes != null && (targetTypes < 1 || targetTypes > ALL_TARGET_MASK);
+    }
 
     /**
      * 按标题与状态分页查询通知。
@@ -45,9 +69,14 @@ public class NoticeServiceImpl extends ServiceImpl<NoticeMapper, Notice> impleme
      * 查询全部已发布的通知，按排序值与创建时间倒序。
      */
     @Override
-    public ResponseDto<Notice> listPublished() {
+    public ResponseDto<Notice> listPublished(Integer uType) {
+        int bit = audienceBit(uType);
         LambdaQueryWrapper<Notice> wrapper = new LambdaQueryWrapper<Notice>()
                 .eq(Notice::getStatus, STATUS_PUBLISHED)
+                .and(audience -> {
+                    audience.isNull(Notice::getTargetTypes);
+                    if (bit != 0) audience.or().apply("(target_types & {0}) <> 0", bit);
+                })
                 .orderByDesc(Notice::getSortOrder)
                 .orderByDesc(Notice::getCreateTime);
         List<Notice> list = baseMapper.selectList(wrapper);
@@ -58,9 +87,9 @@ public class NoticeServiceImpl extends ServiceImpl<NoticeMapper, Notice> impleme
      * 按 ID 查询通知详情。
      */
     @Override
-    public ResponseDto<Notice> getDetail(Long noticeId) {
+    public ResponseDto<Notice> getDetail(Long noticeId, Integer uType) {
         Notice notice = baseMapper.selectById(noticeId);
-        return notice == null ? ResponseDto.error("通知不存在") : ResponseDto.success(notice);
+        return notice == null || !canView(notice, uType) ? ResponseDto.error("通知不存在") : ResponseDto.success(notice);
     }
 
     /**
@@ -70,6 +99,9 @@ public class NoticeServiceImpl extends ServiceImpl<NoticeMapper, Notice> impleme
     public ResponseDto<Notice> addNotice(Notice notice, Integer uId, String uName) {
         if (!StringUtils.hasText(notice.getTitle())) {
             return ResponseDto.error("标题不能为空");
+        }
+        if (invalidTargetTypes(notice.getTargetTypes())) {
+            return ResponseDto.error("通知对象无效");
         }
         notice.setNoticeId(null);
         if (notice.getStatus() == null) {
@@ -91,9 +123,13 @@ public class NoticeServiceImpl extends ServiceImpl<NoticeMapper, Notice> impleme
      * 修改通知内容，创建人信息不允许被覆盖。
      */
     @Override
+    @Transactional
     public ResponseDto<Notice> updateNotice(Notice notice) {
         if (notice.getNoticeId() == null) {
             return ResponseDto.error("通知ID不能为空");
+        }
+        if (invalidTargetTypes(notice.getTargetTypes())) {
+            return ResponseDto.error("通知对象无效");
         }
         if (baseMapper.selectById(notice.getNoticeId()) == null) {
             return ResponseDto.error("通知不存在");
@@ -103,6 +139,11 @@ public class NoticeServiceImpl extends ServiceImpl<NoticeMapper, Notice> impleme
         notice.setCreateTime(null);
         notice.setUpdateTime(new Date());
         baseMapper.updateById(notice);
+        if (notice.getTargetTypes() == null) {
+            baseMapper.update(null, new LambdaUpdateWrapper<Notice>()
+                    .eq(Notice::getNoticeId, notice.getNoticeId())
+                    .set(Notice::getTargetTypes, null));
+        }
         return ResponseDto.success(baseMapper.selectById(notice.getNoticeId()));
     }
 

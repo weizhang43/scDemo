@@ -14,12 +14,12 @@ public interface NoticeService extends IService<Notice> {
     /**
      * 首页轮播用：查询已发布的通知，按 sortOrder 降序、创建时间降序。
      */
-    ResponseDto<Notice> listPublished();
+    ResponseDto<Notice> listPublished(Integer uType);
 
     /**
      * 查询单条通知。
      */
-    ResponseDto<Notice> getDetail(Long noticeId);
+    ResponseDto<Notice> getDetail(Long noticeId, Integer uType);
 
     /**
      * 新增通知。
