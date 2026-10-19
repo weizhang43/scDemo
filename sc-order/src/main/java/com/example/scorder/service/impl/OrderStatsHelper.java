@@ -176,15 +176,15 @@ public class OrderStatsHelper {
                 ? 0L : ((Number) today.get("todayOrderCount")).longValue());
 
         // 待发货/待付款：复用状态分组统计（商家/管理员 scope 均为全量，与订单列表口径一致）
-        Map<String, Long> statusCount = countByStatus(null, null, null, null, OrderScope.unrestricted());
+        Map<String, Long> statusCount = countByStatus(null, null, null, null,
+                merchantId == null ? OrderScope.unrestricted() : OrderScope.merchant(merchantId));
         vo.setPendingShipCount(
                 statusCount.getOrDefault(String.valueOf(OrderServiceImpl.PLACED_ORDER_STATUS), 0L));
         vo.setUnpaidCount(
                 statusCount.getOrDefault(String.valueOf(OrderServiceImpl.UN_COMMIT_ORDER_STATUS), 0L));
 
-        vo.setPendingAfterSaleCount(afterSaleMapper.selectCount(
-                new LambdaQueryWrapper<AfterSale>()
-                        .eq(AfterSale::getStatus, 0)).longValue());
+        vo.setPendingAfterSaleCount(afterSaleMapper.selectPendingCountByMerchant(
+                merchantId));
         return ResponseDto.success(vo);
     }
 
@@ -223,7 +223,7 @@ public class OrderStatsHelper {
         result.put(String.valueOf(OrderServiceImpl.COMPLETE_ORDER_STATUS), 0L);
         result.put(String.valueOf(OrderServiceImpl.CANCEL_ORDER_STATUS), 0L);
         List<Map<String, Object>> rows = orderMapper.countGroupByStatus(
-                key, orderNo, createTimeStart, createTimeEnd, scope.getOwnerUId());
+                key, orderNo, createTimeStart, createTimeEnd, scope.getOwnerUId(), scope.getMerchantId());
         for (Map<String, Object> row : rows) {
             Object status = row.get("orderStatus");
             Object cnt = row.get("cnt");

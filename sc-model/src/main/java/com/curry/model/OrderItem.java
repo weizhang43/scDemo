@@ -32,6 +32,10 @@ public class OrderItem {
     @TableField("quantity")
     private Integer quantity;
 
+    /** 下单时的商品所属商家快照；NULL 表示公共商品，不属于任何商家 */
+    @TableField("merchant_id")
+    private Integer merchantId;
+
     @TableField(exist = false)
     private BigDecimal subtotal;
 

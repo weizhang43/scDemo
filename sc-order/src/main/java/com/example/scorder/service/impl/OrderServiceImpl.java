@@ -233,7 +233,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     public ResponseDto<Order> queryOrder(OrderQueryRequest query, OrderScope scope) {
         Page<Order> page = new Page<>(query.getPageNo(), query.getPageSize());
         orderMapper.selectPageWithUserName(page, query.getKey(), query.getOrderNo(), query.getOrderStatus(),
-                query.getCreateTimeStart(), query.getCreateTimeEnd(), scope.getOwnerUId());
+                query.getCreateTimeStart(), query.getCreateTimeEnd(), scope.getOwnerUId(), scope.getMerchantId());
         fillPageOrderItems(page.getRecords());
         return ResponseDto.success(page);
     }

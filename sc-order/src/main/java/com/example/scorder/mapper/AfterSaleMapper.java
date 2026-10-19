@@ -27,6 +27,9 @@ public interface AfterSaleMapper extends BaseMapper<AfterSale> {
             "  <if test='uId != null'>",
             "    AND a.u_id = #{uId}",
             "  </if>",
+            "  <if test='merchantId != null'>",
+            "    AND EXISTS (SELECT 1 FROM t_order_item oi WHERE oi.o_id = a.o_id AND oi.merchant_id = #{merchantId})",
+            "  </if>",
             "  <if test='status != null'>",
             "    AND a.status = #{status}",
             "  </if>",
@@ -36,7 +39,19 @@ public interface AfterSaleMapper extends BaseMapper<AfterSale> {
     })
     IPage<AfterSale> selectPageWithOrder(IPage<AfterSale> page,
                                          @Param("uId") Integer uId,
-                                         @Param("status") Integer status);
+                                         @Param("status") Integer status,
+                                         @Param("merchantId") Integer merchantId);
+
+    @Select({"<script>",
+            "SELECT COUNT(1) FROM t_after_sale a WHERE a.status = 0",
+            "<if test='merchantId != null'>",
+            "AND EXISTS (SELECT 1 FROM t_order_item oi WHERE oi.o_id = a.o_id AND oi.merchant_id = #{merchantId})",
+            "</if>",
+            "</script>"})
+    long selectPendingCountByMerchant(@Param("merchantId") Integer merchantId);
+
+    @Select("SELECT COUNT(1) FROM t_order_item WHERE o_id = #{oId} AND merchant_id = #{merchantId}")
+    int countMerchantItems(@Param("oId") Integer oId, @Param("merchantId") Integer merchantId);
 
     /**
      * 重新申请：被拒绝(3)/已取消(4)的工单复用同一行回到待审核，

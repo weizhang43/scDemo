@@ -5,9 +5,11 @@ CREATE TABLE IF NOT EXISTS `t_order_item` (
   `p_name` VARCHAR(128) DEFAULT NULL COMMENT '商品名称快照',
   `price` DECIMAL(18,2) DEFAULT NULL COMMENT '下单单价快照',
   `quantity` INT NOT NULL DEFAULT 1 COMMENT '购买数量',
+  `merchant_id` INT DEFAULT NULL COMMENT '下单时所属商家ID，NULL表示公共商品',
   PRIMARY KEY (`id`),
   INDEX `idx_o_id` (`o_id`),
-  INDEX `idx_p_id` (`p_id`)
+  INDEX `idx_p_id` (`p_id`),
+  INDEX `idx_merchant_o_id` (`merchant_id`, `o_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='订单商品中间表';
 
 -- t_order 表追加 address_id 字段（已有表执行）

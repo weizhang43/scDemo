@@ -310,7 +310,7 @@ public class AfterSaleServiceImpl extends ServiceImpl<AfterSaleMapper, AfterSale
     @Override
     public ResponseDto<AfterSale> pageMine(Integer uId, Integer status, int pageNo, int pageSize) {
         Page<AfterSale> page = new Page<>(pageNo, pageSize);
-        afterSaleMapper.selectPageWithOrder(page, uId, status);
+        afterSaleMapper.selectPageWithOrder(page, uId, status, null);
         return ResponseDto.success(page);
     }
 
@@ -319,11 +319,11 @@ public class AfterSaleServiceImpl extends ServiceImpl<AfterSaleMapper, AfterSale
      */
     @Override
     public ResponseDto<AfterSale> pageAll(Integer status, int pageNo, int pageSize, OrderScope scope) {
-        if (!scope.isUnrestricted()) {
+        if (scope.isCustomer()) {
             return ResponseDto.error("无权查看售后工单列表");
         }
         Page<AfterSale> page = new Page<>(pageNo, pageSize);
-        afterSaleMapper.selectPageWithOrder(page, null, status);
+        afterSaleMapper.selectPageWithOrder(page, null, status, scope.getMerchantId());
         return ResponseDto.success(page);
     }
 
@@ -337,10 +337,10 @@ public class AfterSaleServiceImpl extends ServiceImpl<AfterSaleMapper, AfterSale
         }
         AfterSale record = afterSaleMapper.selectOne(new LambdaQueryWrapper<AfterSale>()
                 .eq(AfterSale::getOId, oId).last("LIMIT 1"));
-        if (record == null || !scope.canManage(record.getUId())) {
-            return ResponseDto.success(null);
-        }
-        return ResponseDto.success(record);
+        boolean visible = record != null && (scope.isUnrestricted()
+                || (scope.isCustomer() && scope.canManage(record.getUId()))
+                || (scope.isMerchant() && afterSaleMapper.countMerchantItems(oId, scope.getMerchantId()) > 0));
+        return ResponseDto.success(visible ? record : null);
     }
 
     /**

@@ -19,9 +19,9 @@ public interface OrderItemMapper extends BaseMapper<OrderItem> {
      * 批量插入订单商品记录。一条 SQL 完成，避免循环 insert 产生 N 次网络往返。
      */
     @Insert({"<script>",
-            "INSERT INTO t_order_item(o_id, p_id, p_name, price, quantity) VALUES",
+            "INSERT INTO t_order_item(o_id, p_id, p_name, price, quantity, merchant_id) VALUES",
             "<foreach collection='list' item='it' separator=','>",
-            "(#{it.oId}, #{it.pId}, #{it.pName}, #{it.price}, #{it.quantity})",
+            "(#{it.oId}, #{it.pId}, #{it.pName}, #{it.price}, #{it.quantity}, #{it.merchantId})",
             "</foreach>",
             "</script>"})
     int insertBatch(@Param("list") List<OrderItem> list);
@@ -31,7 +31,7 @@ public interface OrderItemMapper extends BaseMapper<OrderItem> {
      * 商品被删时 LEFT JOIN 出 null，前端回落占位图。
      */
     @Select({"<script>",
-            "SELECT i.id, i.o_id, i.p_id, i.p_name, i.price, i.quantity, p.image_url",
+            "SELECT i.id, i.o_id, i.p_id, i.p_name, i.price, i.quantity, i.merchant_id, p.image_url",
             "FROM t_order_item i",
             "LEFT JOIN t_product p ON p.p_id = i.p_id",
             "WHERE i.o_id IN",
@@ -39,6 +39,9 @@ public interface OrderItemMapper extends BaseMapper<OrderItem> {
             "ORDER BY i.o_id, i.id",
             "</script>"})
     List<OrderItem> selectByOIdsWithImage(@Param("oIds") List<Integer> oIds);
+
+    @Select("SELECT COUNT(1) FROM t_order_item WHERE o_id = #{oId} AND merchant_id = #{merchantId}")
+    int countByOrderAndMerchant(@Param("oId") Integer oId, @Param("merchantId") Integer merchantId);
 
     /**
      * 商品销量排行：按商品聚合购买数量，仅统计已下单(1)/已完成(2)的订单。

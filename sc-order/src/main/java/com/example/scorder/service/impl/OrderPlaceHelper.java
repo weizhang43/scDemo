@@ -279,6 +279,7 @@ public class OrderPlaceHelper {
             oi.setQuantity(it.getQuantity());
             oi.setPrice(OrderSupport.effectivePriceOf(p));
             oi.setPName(p.getPName());
+            oi.setMerchantId(p.getMerchantId());
             itemRecords.add(oi);
         }
         if (!itemRecords.isEmpty()) {

@@ -153,6 +153,19 @@ public class SeckillOrderHelper {
         }
     }
 
+    private Integer loadSeckillProductMerchantId(Integer pId) {
+        ResponseDto<Product> response = orderFeignService.listSellableByIds(Collections.singletonList(pId));
+        if (!OrderSupport.isSuccess(response) || response.getDataList() == null) {
+            throw new BusinessException("秒杀商品不存在");
+        }
+        for (Product product : response.getDataList()) {
+            if (pId.equals(product.getPId())) {
+                return product.getMerchantId();
+            }
+        }
+        throw new BusinessException("秒杀商品不存在");
+    }
+
     /**
      * 创建秒杀订单（金额为秒杀价）与订单商品明细（数量1）。
      */
@@ -173,6 +186,7 @@ public class SeckillOrderHelper {
         oi.setPName(activity.getPName());
         oi.setQuantity(1);
         oi.setPrice(activity.getSeckillPrice());
+        oi.setMerchantId(loadSeckillProductMerchantId(activity.getPId()));
         orderItemMapper.insert(oi);
         return order;
     }

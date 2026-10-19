@@ -43,6 +43,9 @@ public final class OrderScopeResolver {
         if (uType == null || uType == AuthConstant.U_TYPE_CUSTOMER) {
             return OrderScope.owner(uId);
         }
+        if (uType == AuthConstant.U_TYPE_MERCHANT) {
+            return OrderScope.merchant(uId);
+        }
         return OrderScope.unrestricted();
     }
 

@@ -57,6 +57,9 @@ public interface OrderMapper extends BaseMapper<Order> {
             "  <if test='uId != null'>",
             "    AND o.u_id = #{uId}",
             "  </if>",
+            "  <if test='merchantId != null'>",
+            "    AND EXISTS (SELECT 1 FROM t_order_item oi WHERE oi.o_id = o.o_id AND oi.merchant_id = #{merchantId})",
+            "  </if>",
             "  <if test='key != null and key != \"\"'>",
             "    AND (u.u_name LIKE CONCAT('%', #{key}, '%')",
             "         OR u.real_name LIKE CONCAT('%', #{key}, '%')",
@@ -84,7 +87,8 @@ public interface OrderMapper extends BaseMapper<Order> {
                                         @Param("orderStatus") Integer orderStatus,
                                         @Param("createTimeStart") java.util.Date createTimeStart,
                                         @Param("createTimeEnd") java.util.Date createTimeEnd,
-                                        @Param("uId") Integer uId);
+                                        @Param("uId") Integer uId,
+                                        @Param("merchantId") Integer merchantId);
 
     /**
      * 按订单状态分组统计数量（用于列表状态 Tab 的数量徽标）。
@@ -98,6 +102,9 @@ public interface OrderMapper extends BaseMapper<Order> {
             "<where>",
             "  <if test='uId != null'>",
             "    AND o.u_id = #{uId}",
+            "  </if>",
+            "  <if test='merchantId != null'>",
+            "    AND EXISTS (SELECT 1 FROM t_order_item oi WHERE oi.o_id = o.o_id AND oi.merchant_id = #{merchantId})",
             "  </if>",
             "  <if test='key != null and key != \"\"'>",
             "    AND (u.u_name LIKE CONCAT('%', #{key}, '%')",
@@ -121,7 +128,8 @@ public interface OrderMapper extends BaseMapper<Order> {
                                                  @Param("orderNo") String orderNo,
                                                  @Param("createTimeStart") java.util.Date createTimeStart,
                                                  @Param("createTimeEnd") java.util.Date createTimeEnd,
-                                                 @Param("uId") Integer uId);
+                                                 @Param("uId") Integer uId,
+                                                 @Param("merchantId") Integer merchantId);
 
     /**
      * 平台口径今日成交：实付金额（order_amount 为券后价）与订单数，仅统计已支付(1)/已完成(2)/已发货(3)。
