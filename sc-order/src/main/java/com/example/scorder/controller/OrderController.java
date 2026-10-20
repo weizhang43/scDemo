@@ -7,6 +7,7 @@ import com.curry.model.Order;
 import com.curry.model.Product;
 import com.curry.model.annotation.OpLog;
 import com.curry.model.auth.AuthConstant;
+import com.example.scorder.auth.OrderScope;
 import com.example.scorder.auth.OrderScopeResolver;
 import com.example.scorder.config.OrderConfig;
 import com.example.scorder.dto.OrderQueryRequest;
@@ -209,7 +210,17 @@ public class OrderController {
      */
     @OpLog(module = "订单管理", type = OpLog.OpType.ADD, description = "批量下单V2")
     @PostMapping("/placeOrderV2")
-    public ResponseDto<Order> placeOrderV2(@RequestBody PlaceOrderRequest request) {
+    public ResponseDto<Order> placeOrderV2(
+            @RequestBody PlaceOrderRequest request,
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_ID, required = false) Integer uId,
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_NAME, required = false) String uName) {
+        OrderScope scope = OrderScopeResolver.current();
+        if (!scope.isCustomer() || uId == null || !uId.equals(scope.getOwnerUId())) {
+            return ResponseDto.error("无权限下单");
+        }
+        request.setUId(scope.getOwnerUId());
+        request.setAddPerson(uName);
+        request.setOrderStatus(0);
         return orderService.placeOrder(request);
     }
 
@@ -218,7 +229,16 @@ public class OrderController {
      */
     @OpLog(module = "订单管理", type = OpLog.OpType.ADD, description = "秒杀下单")
     @PostMapping("/seckill")
-    public ResponseDto<SeckillResultVO> seckill(@RequestBody SeckillRequest request) {
+    public ResponseDto<SeckillResultVO> seckill(
+            @RequestBody SeckillRequest request,
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_ID, required = false) Integer uId,
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_NAME, required = false) String uName) {
+        OrderScope scope = OrderScopeResolver.current();
+        if (!scope.isCustomer() || uId == null || !uId.equals(scope.getOwnerUId())) {
+            return ResponseDto.error("无权限秒杀");
+        }
+        request.setuId(scope.getOwnerUId());
+        request.setAddPerson(uName);
         return orderService.seckill(request);
     }
 
@@ -226,9 +246,12 @@ public class OrderController {
      * 查询秒杀结果（前端轮询用）
      */
     @GetMapping("/seckill/result")
-    public ResponseDto<SeckillResultVO> seckillResult(@RequestParam("uId") Integer uId,
-                                                      @RequestParam("activityId") Integer activityId) {
-        return ResponseDto.success(orderService.seckillResult(uId, activityId));
+    public ResponseDto<SeckillResultVO> seckillResult(@RequestParam("activityId") Integer activityId) {
+        OrderScope scope = OrderScopeResolver.current();
+        if (!scope.isCustomer()) {
+            return ResponseDto.error("无权限查询秒杀结果");
+        }
+        return ResponseDto.success(orderService.seckillResult(scope.getOwnerUId(), activityId));
     }
 
     /**

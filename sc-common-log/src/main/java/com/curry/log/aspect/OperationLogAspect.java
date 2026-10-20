@@ -18,6 +18,7 @@ import java.util.Arrays;
 import java.util.Date;
 import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
+import java.util.regex.Pattern;
 
 /**
  * 共享操作日志切面：拦截 @OpLog，在请求线程同步组装 OperationLog(读取 ThreadLocal 中的请求上下文)，
@@ -33,6 +34,8 @@ public class OperationLogAspect {
     private static final int MAX_SUMMARY = 2000;
     /** 截断后追加的省略号，其长度参与截断位置计算 */
     private static final String ELLIPSIS = "...";
+    private static final Pattern SENSITIVE_FIELD = Pattern.compile(
+            "(?i)(password|passwd|token|authorization|secret|signature|verifyCode|smsCode|emailCode)\\s*[=:]\\s*[^,} ]+");
 
     private final OperationLogSink sink;
     private final Executor executor;
@@ -95,15 +98,16 @@ public class OperationLogAspect {
             if (uId != null && uId.matches("\\d+")) {
                 entity.setUId(Integer.valueOf(uId));
             }
-            entity.setUName(request.getHeader(AuthConstant.HEADER_X_USER_NAME));
+            String uName = request.getHeader(AuthConstant.HEADER_X_USER_NAME);
+            entity.setUName(maskPhoneOrEmail(uName));
         }
 
         if (error != null) {
             entity.setStatus(0);
-            entity.setErrorMsg(summarize(error.toString()));
+            entity.setErrorMsg(summarize(maskSensitive(error.toString())));
         } else {
             entity.setStatus(1);
-            entity.setResponseSummary(ret == null ? null : summarize(ret.toString()));
+            entity.setResponseSummary(ret == null ? null : summarize(maskSensitive(ret.toString())));
         }
         return entity;
     }
@@ -144,7 +148,19 @@ public class OperationLogAspect {
                 || cn.contains("MultipartFile") || cn.contains("ServletOutputStream")) {
             return arg.getClass().getSimpleName();
         }
-        return summarize(arg.toString());
+        return summarize(maskSensitive(arg.toString()));
+    }
+
+    private static String maskSensitive(String value) {
+        return SENSITIVE_FIELD.matcher(value).replaceAll("$1=***");
+    }
+
+    private static String maskPhoneOrEmail(String value) {
+        if (value == null) return null;
+        if (value.matches("1\\d{10}")) return value.substring(0, 3) + "****" + value.substring(7);
+        int at = value.indexOf('@');
+        if (at > 1) return value.charAt(0) + "***" + value.substring(at);
+        return value;
     }
 
     /**

@@ -49,9 +49,9 @@ public class TokenService {
             String json = objectMapper.writeValueAsString(data);
             stringRedisTemplate.opsForValue().set(key, json,
                     AuthConstant.DEFAULT_TTL_SECONDS, TimeUnit.SECONDS);
-            LOGGER.info("[TokenService] 写入 Redis 成功 key={} json={}", key, json);
+            LOGGER.debug("[TokenService] 写入 Redis 成功 userId={}", user.getUId());
         } catch (Exception e) {
-            LOGGER.error("[TokenService] 写入 Redis 失败 key={}", key, e);
+            LOGGER.error("[TokenService] 写入 Redis 失败 userId={}", user.getUId(), e);
             throw new IllegalStateException("写入 Redis 失败", e);
         }
         return token;
@@ -98,7 +98,7 @@ public class TokenService {
         try {
             return objectMapper.readValue(raw, new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
-            LOGGER.warn("[TokenService] 会话 JSON 解析失败 key={}", key, e);
+            LOGGER.warn("[TokenService] 会话 JSON 解析失败", e);
             return null;
         }
     }

@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -15,60 +16,64 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import response.ResponseDto;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.util.UUID;
 
-/**
- * 图片上传与访问接口。
- */
 @RestController
 public class FileController {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(FileController.class);
+    private static final long MAX_FILE_SIZE = 10 * 1024 * 1024;
+    private static final int MAX_IMAGE_PIXELS = 40_000_000;
+    private static final String[] ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"};
 
     @Value("${user.image.dir:./notice-images}")
     private String imageDir;
 
-    /**
-     * 上传图片，返回可访问的相对路径。
-     * @param file 图片文件（png/jpg/jpeg/gif/webp）
-     */
     @PostMapping("/user/image/upload")
     public ResponseDto<String> upload(@RequestParam("file") MultipartFile file) {
-        String error = validateUpload(file);
-        if (error != null) {
-            return ResponseDto.error(error);
-        }
-        String ext = extractExt(file.getOriginalFilename());
-        String fileName = UUID.randomUUID().toString().replace("-", "") + ext;
+        String extension = validateUpload(file);
+        String fileName = UUID.randomUUID().toString().replace("-", "") + "." + extension;
         return saveImage(file, fileName);
     }
 
-    /**
-     * 上传前校验：非空 + 扩展名白名单。通过返回 null，否则返回错误提示。
-     */
     private String validateUpload(MultipartFile file) {
         if (file == null || file.isEmpty()) {
-            return "请选择图片";
+            throw new IllegalArgumentException("请选择图片");
         }
-        String ext = extractExt(file.getOriginalFilename());
-        return ext.matches("\\.(png|jpg|jpeg|gif|webp)") ? null : "仅支持 png/jpg/jpeg/gif/webp 格式";
+        if (file.getSize() > MAX_FILE_SIZE) {
+            throw new IllegalArgumentException("图片不能超过 10MB");
+        }
+        String extension = extension(file.getOriginalFilename());
+        if (!containsExtension(extension)) {
+            throw new IllegalArgumentException("仅支持 png/jpg/jpeg/gif/webp 格式");
+        }
+        try {
+            BufferedImage image = ImageIO.read(file.getInputStream());
+            if (image == null || (long) image.getWidth() * image.getHeight() > MAX_IMAGE_PIXELS) {
+                throw new IllegalArgumentException("图片内容无效或尺寸过大");
+            }
+        } catch (IOException e) {
+            throw new IllegalArgumentException("图片内容无效");
+        }
+        return extension;
     }
 
-    /**
-     * 取小写扩展名（含点），无扩展名返回空串。
-     */
-    private static String extractExt(String original) {
-        if (original != null && original.contains(".")) {
-            return original.substring(original.lastIndexOf('.')).toLowerCase();
+    private static boolean containsExtension(String extension) {
+        for (String allowed : ALLOWED_EXTENSIONS) {
+            if (allowed.equals(extension)) return true;
         }
-        return "";
+        return false;
     }
 
-    /**
-     * 落盘保存图片并返回访问路径。
-     */
+    private static String extension(String original) {
+        if (original == null || !original.contains(".")) return "";
+        return original.substring(original.lastIndexOf('.') + 1).toLowerCase();
+    }
+
     private ResponseDto<String> saveImage(MultipartFile file, String fileName) {
         File dir = new File(imageDir).getAbsoluteFile();
         if (!dir.exists() && !dir.mkdirs()) {
@@ -78,18 +83,14 @@ public class FileController {
             file.transferTo(new File(dir, fileName));
         } catch (IOException e) {
             LOGGER.warn("[FileController] 图片保存失败 fileName={}", fileName, e);
-            return ResponseDto.error("图片保存失败：" + e.getMessage());
+            return ResponseDto.error("图片保存失败");
         }
         return ResponseDto.success("/user/image/" + fileName);
     }
 
-    /**
-     * 按文件名读取图片，防目录穿越；不存在时返回 404。
-     * @param fileName 图片文件名
-     */
     @GetMapping("/user/image/{fileName:.+}")
     public ResponseEntity<Resource> view(@PathVariable("fileName") String fileName) {
-        if (fileName.contains("..") || fileName.contains(File.separator)) {
+        if (fileName.contains("..") || fileName.contains(File.separator) || !containsExtension(extension(fileName))) {
             return ResponseEntity.badRequest().build();
         }
         File file = new File(new File(imageDir).getAbsoluteFile(), fileName);
@@ -97,24 +98,15 @@ public class FileController {
             return ResponseEntity.notFound().build();
         }
         return ResponseEntity.ok()
-                .contentType(resolveMediaType(fileName.toLowerCase()))
+                .header("X-Content-Type-Options", "nosniff")
+                .contentType(resolveMediaType(extension(fileName)))
                 .body(new FileSystemResource(file));
     }
 
-    /**
-     * 根据扩展名解析响应的媒体类型，未知类型按 JPEG 处理。
-     */
-    private static MediaType resolveMediaType(String name) {
-        MediaType type;
-        if (name.endsWith(".png")) {
-            type = MediaType.IMAGE_PNG;
-        } else if (name.endsWith(".gif")) {
-            type = MediaType.IMAGE_GIF;
-        } else if (name.endsWith(".webp")) {
-            type = MediaType.parseMediaType("image/webp");
-        } else {
-            type = MediaType.IMAGE_JPEG;
-        }
-        return type;
+    private static MediaType resolveMediaType(String extension) {
+        if ("png".equals(extension)) return MediaType.IMAGE_PNG;
+        if ("gif".equals(extension)) return MediaType.IMAGE_GIF;
+        if ("webp".equals(extension)) return MediaType.parseMediaType("image/webp");
+        return MediaType.IMAGE_JPEG;
     }
 }

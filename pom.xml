@@ -192,6 +192,8 @@
             </activation>
             <properties>
                 <spring.profile>dev</spring.profile>
+                <nacos.namespace></nacos.namespace>
+                <nacos.server-addr>localhost:8848</nacos.server-addr>
             </properties>
         </profile>
         <!-- 测试/生产环境（mvn clean package -Ptest） -->
@@ -199,6 +201,8 @@
             <id>test</id>
             <properties>
                 <spring.profile>test</spring.profile>
+                <nacos.namespace></nacos.namespace>
+                <nacos.server-addr>localhost:8848</nacos.server-addr>
             </properties>
         </profile>
     </profiles>

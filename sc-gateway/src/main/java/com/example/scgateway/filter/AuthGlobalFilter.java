@@ -25,6 +25,7 @@ import javax.annotation.PostConstruct;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * 全局鉴权过滤器。
@@ -73,23 +74,15 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
             "/user/chat",
             "/user/parseImage",
             "/user/generateImage",
-            "/actuator/**",
-            // 模拟支付网关：收银台前端裸访问 + sc-order 商户调用（自带 HMAC 验签）
-            "/pay/**",
-            // 网关异步回调入口（sc-pay → sc-order），HMAC 验签 + nonce 防重放
+            "/actuator/health",
+            "/actuator/info",
+            // 支付回调由支付服务自身执行 HMAC、时间戳、nonce 和业务幂等校验
             "/order/pay/notify",
-            // 游客可见的只读接口：登录页公告 + 未登录浏览商品（均只有 GET 映射）
+            // 游客只读接口
             "/user/notice/list",
             "/user/notice/login-list",
-            // 个人工作页（日报/周报）：登录页入口，免登录访问
-            "/user/workReport/**",
-            // 个人工作页（学习计划）：登录页入口，免登录访问；其中 /job/** 由 X-Inner-Token 自行校验
-            "/user/studyPlan/**",
-            // 个人工作页（知识速记）：登录页入口，免登录访问
-            "/user/knowledge/**",
             "/product/pageQuery",
             "/product/category/tree",
-            // 游客浏览商品时查看评价列表（该路径只有 GET 映射）
             "/order/review/product/**"
     };
 
@@ -100,13 +93,26 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
      */
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
-        ServerHttpRequest request = exchange.getRequest();
+        String traceId = traceId(exchange.getRequest().getHeaders().getFirst(AuthConstant.HEADER_X_TRACE_ID));
+        ServerHttpRequest tracedRequest = exchange.getRequest().mutate()
+                .header(AuthConstant.HEADER_X_TRACE_ID, traceId)
+                .build();
+        exchange.getResponse().getHeaders().set(AuthConstant.HEADER_X_TRACE_ID, traceId);
+        ServerWebExchange tracedExchange = exchange.mutate().request(tracedRequest).build();
+        ServerHttpRequest request = tracedExchange.getRequest();
         String path = request.getURI().getPath();
         String method = request.getMethod() == null ? METHOD_GET : request.getMethod().name();
         if (isWhitelisted(path) || isImagePassThrough(path, method)) {
-            return relayOptionalAuth(exchange, chain);
+            return relayOptionalAuth(tracedExchange, chain);
         }
-        return authenticate(exchange, chain, path);
+        return authenticate(tracedExchange, chain, path);
+    }
+
+    private static String traceId(String candidate) {
+        if (candidate != null && candidate.matches("[A-Za-z0-9._-]{1,64}")) {
+            return candidate;
+        }
+        return UUID.randomUUID().toString().replace("-", "");
     }
 
     /**
@@ -124,7 +130,7 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
         String token = auth.substring(AuthConstant.BEARER_PREFIX.length()).trim();
         Map<String, Object> payload = JwtUtil.verify(token);
         if (payload == null || !(payload.get(KEY_U_ID) instanceof Number)) {
-            return chain.filter(sanitized);
+            return unauthorized(sanitized, "token 无效或已过期");
         }
         Integer uId = ((Number) payload.get(KEY_U_ID)).intValue();
         String redisKey = AuthConstant.buildTokenKey(uId, token);
@@ -223,7 +229,7 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
         }
         Integer uId = ((Number) uIdObj).intValue();
         String redisKey = AuthConstant.buildTokenKey(uId, token);
-        LOGGER.info("[AuthFilter] 校验 token, redisKey={}, path={}", redisKey, path);
+        LOGGER.debug("[AuthFilter] 校验会话, path={}, userId={}", path, uId);
         return verifySession(exchange, chain, redisKey);
     }
 
@@ -234,7 +240,7 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
         return stringRedisTemplate.opsForValue().get(redisKey)
                 .flatMap(raw -> handleSession(exchange, chain, redisKey, raw))
                 .switchIfEmpty(Mono.defer(() -> {
-                    LOGGER.warn("[AuthFilter] 登录态失效: Redis 中未找到 key={}", redisKey);
+                    LOGGER.warn("[AuthFilter] 登录态失效");
                     return unauthorizedMono(exchange, "登录已过期，请重新登录");
                 }));
     }
@@ -245,11 +251,10 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
      */
     private Mono<Void> handleSession(ServerWebExchange exchange, GatewayFilterChain chain,
                                      String redisKey, String raw) {
-        LOGGER.info("[AuthFilter] 命中 Redis, key={}, raw={}", redisKey, abbreviate(raw));
+        LOGGER.debug("[AuthFilter] 命中 Redis 会话");
         Map<String, Object> data = parseMap(raw);
         if (data == null || data.get(KEY_U_ID) == null) {
-            LOGGER.warn("[AuthFilter] 登录态失效: Redis raw 异常或缺失 uId, key={}, raw={}",
-                    redisKey, abbreviate(raw));
+            LOGGER.warn("[AuthFilter] 登录态失效: Redis 会话异常");
             return unauthorizedMono(exchange, "登录状态异常，请重新登录");
         }
         // 本次改动前签发的会话 JSON 里没有 uType，无法判定角色。
@@ -257,7 +262,7 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
         // 直接销毁会话强制重登一次，语义无歧义。
         Object typeVal = data.get("uType");
         if (!(typeVal instanceof Number)) {
-            LOGGER.warn("[AuthFilter] 会话缺少 uType（改动前签发），销毁并要求重新登录, key={}", redisKey);
+            LOGGER.warn("[AuthFilter] 会话缺少 uType，销毁并要求重新登录");
             return stringRedisTemplate.delete(redisKey)
                     .then(unauthorizedMono(exchange, "登录信息需要更新，请重新登录"));
         }
@@ -298,20 +303,10 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
         try {
             return objectMapper.readValue(raw, new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
-            // 解析失败返回 null，由调用方按"登录态失效"处理，raw 仅写入日志用于排查
-            LOGGER.warn("[AuthFilter] Redis 会话 JSON 解析失败, raw={}", abbreviate(raw), e);
+            // 解析失败只记录类型，不记录会话原文，避免敏感信息进入日志
+            LOGGER.warn("[AuthFilter] Redis 会话 JSON 解析失败");
             return null;
         }
-    }
-
-    /**
-     * 截断过长字符串（超过 {@link #ABBREVIATE_MAX_LEN} 字符加省略号），用于日志与错误消息，避免刷屏。
-     */
-    private static String abbreviate(String s) {
-        if (s == null) {
-            return "null";
-        }
-        return s.length() <= ABBREVIATE_MAX_LEN ? s : s.substring(0, ABBREVIATE_MAX_LEN) + "...";
     }
 
     /**

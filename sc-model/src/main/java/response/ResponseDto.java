@@ -18,6 +18,10 @@ public class ResponseDto<T> {
 
     private Object daoResult;
 
+    private String errorCode;
+
+    private String traceId;
+
     /**
      * 请求成功状态码
      */
@@ -27,6 +31,8 @@ public class ResponseDto<T> {
      * 请求失败状态码
      */
     public static final Integer ERROR_CODE = 500;
+
+    public static final String DEFAULT_ERROR_CODE = "BUSINESS_ERROR";
 
     /**
      * 成功返回列表结果，code=200。
@@ -55,10 +61,20 @@ public class ResponseDto<T> {
      * @param msg 面向调用方的错误提示
      */
     public static <T> ResponseDto<T> error(String msg) {
+        return error(DEFAULT_ERROR_CODE, msg);
+    }
+
+    public static <T> ResponseDto<T> error(String errorCode, String msg) {
         ResponseDto<T> responseDto = new ResponseDto<>();
         responseDto.setCode(ERROR_CODE);
+        responseDto.setErrorCode(errorCode);
         responseDto.setMsg(msg);
         return responseDto;
+    }
+
+    public ResponseDto<T> traceId(String traceId) {
+        this.traceId = traceId;
+        return this;
     }
 
     /**

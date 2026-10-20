@@ -43,6 +43,9 @@ public final class AuthConstant {
     /** Bearer 前缀 */
     public static final String BEARER_PREFIX = "Bearer ";
 
+    /** 请求头：请求链路追踪 ID */
+    public static final String HEADER_X_TRACE_ID = "X-Trace-Id";
+
     /** 请求头：服务间内部调用令牌（无用户上下文的定时任务/MQ 消费场景使用） */
     public static final String HEADER_X_INNER_TOKEN = "X-Inner-Token";
 
