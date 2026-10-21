@@ -140,6 +140,15 @@ public class ProductController {
     }
 
     /**
+     * 搜索框联想词：按商品名匹配在售商品，返回轻量列表（游客可用）。
+     */
+    @GetMapping("/search/suggest")
+    public ResponseDto<Product> searchSuggest(@RequestParam("keyword") String keyword,
+                                              @RequestParam(value = "limit", defaultValue = "10") int limit) {
+        return ResponseDto.success(productService.searchSuggest(keyword, limit));
+    }
+
+    /**
      * 新增商品
      */
     @OpLog(module = "商品管理", type = OpLog.OpType.ADD, description = "新增商品")

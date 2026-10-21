@@ -46,7 +46,8 @@ public class InnerAuthFilter extends OncePerRequestFilter {
                 && path.contains("/product/image/");
         // 游客浏览商品：与网关白名单保持一致的只读路径
         boolean isGuestRead = "GET".equalsIgnoreCase(method)
-                && (path.contains("/product/pageQuery") || path.contains("/product/category/tree"));
+                && (path.contains("/product/pageQuery") || path.contains("/product/category/tree")
+                || path.contains("/product/search/suggest") || path.contains("/product/recommend"));
         if (isActuator || isImageGet || isGuestRead) {
             chain.doFilter(request, response);
             return;

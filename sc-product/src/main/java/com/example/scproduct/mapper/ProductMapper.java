@@ -50,6 +50,8 @@ public interface ProductMapper extends BaseMapper<Product> {
             "  <when test='sortBy == \"reviews\"'>ORDER BY review_count DESC, p.p_id DESC</when>" +
             // like_count 既是输出别名又是 t_product 的真实列名，这里写原始表达式避开歧义
             "  <when test='sortBy == \"likes\"'>ORDER BY COALESCE(l.like_total, 0) DESC, p.p_id DESC</when>" +
+            "  <when test='sortBy == \"priceAsc\"'>ORDER BY p.price ASC, p.p_id DESC</when>" +
+            "  <when test='sortBy == \"priceDesc\"'>ORDER BY p.price DESC, p.p_id DESC</when>" +
             "  <otherwise>ORDER BY p.p_id DESC</otherwise>" +
             "</choose>" +
             "</script>")

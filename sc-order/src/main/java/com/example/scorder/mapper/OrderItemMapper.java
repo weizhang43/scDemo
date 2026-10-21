@@ -44,6 +44,12 @@ public interface OrderItemMapper extends BaseMapper<OrderItem> {
     int countByOrderAndMerchant(@Param("oId") Integer oId, @Param("merchantId") Integer merchantId);
 
     /**
+     * 订单关联的商家用户ID（站内消息通知用）：按明细 DISTINCT，公共商品(merchant_id NULL)不含在内。
+     */
+    @Select("SELECT DISTINCT merchant_id FROM t_order_item WHERE o_id = #{oId} AND merchant_id IS NOT NULL")
+    List<Integer> selectMerchantUIds(@Param("oId") Integer oId);
+
+    /**
      * 商品销量排行：按商品聚合购买数量，仅统计已下单(1)/已完成(2)的订单。
      * 只按 p_id 分组——p_name 是每单快照，商品改名后同一商品会被拆成多行，故用 MAX 取一个。
      * merchantId 非 null 时只统计该商家商品与公共商品（商家工作台热销榜用）。

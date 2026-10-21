@@ -60,6 +60,11 @@ public interface ProductService extends IService<Product> {
     ResponseDto<Product> pageQuery(ProductQuery query, AudienceScope scope);
 
     /**
+     * 搜索联想：按商品名前缀/包含匹配的在售商品，返回轻量字段（id/名称/价格/主图），供搜索框下拉。
+     */
+    List<Product> searchSuggest(String keyword, int limit);
+
+    /**
      * 新增商品：盖上创建者的 merchant_id，默认上架。
      */
     ResponseDto<Product> addOne(Product product, AudienceScope scope);

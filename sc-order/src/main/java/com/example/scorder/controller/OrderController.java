@@ -293,6 +293,14 @@ public class OrderController {
     }
 
     /**
+     * 物流轨迹（模拟）：按发货时间确定性推导节点，商家与顾客均可查看自己的订单。
+     */
+    @GetMapping("/logistics/{id}")
+    public ResponseDto<Map<String, Object>> logistics(@PathVariable("id") Integer id) {
+        return orderService.getLogistics(id, OrderScopeResolver.current());
+    }
+
+    /**
      * 按主键删除订单（逻辑/物理删除由 Service 决定）。
      */
     @OpLog(module = "订单管理", type = OpLog.OpType.DELETE, description = "删除订单")

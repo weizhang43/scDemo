@@ -13,6 +13,7 @@ import com.example.scorder.mapper.OrderMapper;
 import com.example.scorder.mapper.PayNotifyLogMapper;
 import com.example.scorder.mapper.PayRecordMapper;
 import com.example.scorder.service.PayService;
+import com.example.scorder.service.UserFeignService;
 import com.example.scorder.vo.PayCreateVO;
 import com.example.scorder.vo.PayStatusVO;
 import exception.BusinessException;
@@ -91,6 +92,12 @@ public class PayServiceImpl implements PayService {
 
     @Autowired
     private TransactionTemplate transactionTemplate;
+
+    @Autowired
+    private MessageNotifyHelper messageNotifyHelper;
+
+    @Autowired
+    private UserFeignService userFeignService;
 
     @Value("${pay.secret:sc-pay-secret-dev}")
     private String paySecret;
@@ -395,6 +402,8 @@ public class PayServiceImpl implements PayService {
                     PLACED_ORDER_STATUS, order.getVersion());
             if (orderRows > 0) {
                 registerCouponUseAfterCommit(order);
+                registerPaidNotifyAfterCommit(order);
+                registerPointsAfterCommit(order);
                 return new Outcome(true, "支付成功，订单已更新为已支付");
             }
             order = orderMapper.selectById(record.getOId());
@@ -452,6 +461,56 @@ public class PayServiceImpl implements PayService {
         } catch (Exception e) {
             LOGGER.error("[PayNotify] 券核销调用失败 couponId={}, oId={}", couponId, oId, e);
         }
+    }
+
+    /**
+     * 事务提交后 best-effort 加积分：1 元 = 1 分（向下取整）。
+     * 仅在订单 0→1 CAS 成功分支注册；sc-user 按订单号幂等，网关重试回调不会重复加分。
+     */
+    private void registerPointsAfterCommit(Order order) {
+        final Integer uId = order.getUId();
+        final String orderNo = order.getOrderNo();
+        int points = order.getOrderAmount() == null
+                ? 0 : order.getOrderAmount().setScale(0, java.math.RoundingMode.FLOOR).intValue();
+        if (uId == null || points <= 0) {
+            return;
+        }
+        final int earned = points;
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                try {
+                    ResponseDto<Object> resp = userFeignService.addPoints(uId, orderNo, earned, "订单支付");
+                    if (resp == null || !Integer.valueOf(200).equals(resp.getCode())) {
+                        LOGGER.warn("[PayNotify] 积分加分未成功 uId={}, orderNo={}, msg={}",
+                                uId, orderNo, resp == null ? null : resp.getMsg());
+                    }
+                } catch (Exception e) {
+                    LOGGER.warn("[PayNotify] 积分加分调用失败 uId={}, orderNo={}", uId, orderNo, e);
+                }
+            }
+        });
+    }
+
+    /**
+     * 事务提交后 best-effort 站内通知：顾客（支付成功）+ 订单关联商家（新订单待发货）。
+     * 仅在订单 0→1 CAS 成功的分支注册，网关重复回调幂等不重复通知。
+     */
+    private void registerPaidNotifyAfterCommit(Order order) {
+        final Integer oId = order.getOId();
+        final Integer uId = order.getUId();
+        final String orderNo = order.getOrderNo();
+        final String amount = order.getOrderAmount() == null ? "" : order.getOrderAmount().toPlainString();
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                messageNotifyHelper.pushQuietly(uId, MessageNotifyHelper.TYPE_ORDER,
+                        "支付成功", "订单 " + orderNo + " 已支付成功，实付 ¥" + amount + "，商家会尽快为您发货。",
+                        String.valueOf(oId));
+                messageNotifyHelper.notifyMerchantsOfOrder(oId,
+                        "新订单已支付", "订单 " + orderNo + " 已完成支付（¥" + amount + "），请及时发货。");
+            }
+        });
     }
 
     /**

@@ -76,6 +76,12 @@ public interface OrderService extends IService<Order> {
     Order getVisibleById(Integer id, OrderScope scope);
 
     /**
+     * 物流轨迹（模拟）：以发货时间为基点按时间差确定性生成节点，
+     * 已签收（状态2 或 receive_time 非空）强制推进到签收。daoResult 含快递信息与节点列表。
+     */
+    ResponseDto<java.util.Map<String, Object>> getLogistics(Integer id, OrderScope scope);
+
+    /**
      * 批量下单（新版）：校验库存 → 扣减库存 → 写订单 → 写订单商品中间表
      */
     ResponseDto<Order> placeOrder(PlaceOrderRequest request);

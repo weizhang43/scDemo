@@ -2,6 +2,7 @@ package com.example.scproduct.vo;
 
 import org.springframework.format.annotation.DateTimeFormat;
 
+import java.math.BigDecimal;
 import java.util.Date;
 
 /**
@@ -14,6 +15,12 @@ public class ProductQuery {
     private String pName;
     /** 商品描述，ES 模糊检索（不可用时降级 MySQL LIKE） */
     private String proDesc;
+    /** 价格区间起（含），按 t_product.price 原价 */
+    private BigDecimal minPrice;
+    /** 价格区间止（含） */
+    private BigDecimal maxPrice;
+    /** 库存过滤：1-仅看有货，null 不限 */
+    private Integer hasStock;
     /** 生产日期区间起 */
     @DateTimeFormat(pattern = "yyyy-MM-dd")
     private Date productionDateStart;
@@ -28,7 +35,7 @@ public class ProductQuery {
     private Integer status;
     /** 分类过滤；一级分类自动展开为「自身 + 子分类」，null 不限（仅分页查询使用） */
     private Integer categoryId;
-    /** 排序：sales-成交数 reviews-评价数 likes-点赞数，其余（含 null）按 id 倒序 */
+    /** 排序：sales-成交数 reviews-评价数 likes-点赞数 priceAsc-价格升序 priceDesc-价格降序，其余（含 null）按 id 倒序 */
     private String sortBy;
     /** 页码，默认 1 */
     private int pageNo = 1;
@@ -49,6 +56,30 @@ public class ProductQuery {
 
     public void setProDesc(String proDesc) {
         this.proDesc = proDesc;
+    }
+
+    public BigDecimal getMinPrice() {
+        return minPrice;
+    }
+
+    public void setMinPrice(BigDecimal minPrice) {
+        this.minPrice = minPrice;
+    }
+
+    public BigDecimal getMaxPrice() {
+        return maxPrice;
+    }
+
+    public void setMaxPrice(BigDecimal maxPrice) {
+        this.maxPrice = maxPrice;
+    }
+
+    public Integer getHasStock() {
+        return hasStock;
+    }
+
+    public void setHasStock(Integer hasStock) {
+        this.hasStock = hasStock;
     }
 
     public Date getProductionDateStart() {

@@ -74,6 +74,9 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
             "/user/chat",
             "/user/parseImage",
             "/user/generateImage",
+            // 站内消息 WebSocket：浏览器 WS 无法带 Authorization 头，
+            // 升级请求放行到 sc-user，由端点握手时校验 query 中的 token（同一 Redis 会话体系）
+            "/user/ws",
             "/actuator/health",
             "/actuator/info",
             // 支付回调由支付服务自身执行 HMAC、时间戳、nonce 和业务幂等校验
@@ -82,8 +85,15 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
             "/user/notice/list",
             "/user/notice/login-list",
             "/product/pageQuery",
+            "/product/search/suggest",
+            "/product/recommend",
             "/product/category/tree",
-            "/order/review/product/**"
+            "/order/review/product/**",
+            // 个人空间（登录页入口，免登录访问）
+            "/user/workReport/**",
+            // 其中 /job/** 由 X-Inner-Token 自行校验
+            "/user/studyPlan/**",
+            "/user/knowledge/**"
     };
 
     /**

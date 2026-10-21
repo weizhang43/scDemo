@@ -38,4 +38,11 @@ public interface CouponService {
 
     /** 取消/退款返还：1|2→0 清空快照，天然幂等 */
     ResponseDto<UserCoupon> restore(Integer couponId);
+
+    /**
+     * 积分兑换发券：创建隐藏模板（status=0 不进领券中心）并直发用户券。
+     * 每次兑换独立模板，绕开「一人每模板一张」限制；券可正常下单锁定/核销。
+     */
+    ResponseDto<UserCoupon> issueForPoints(Integer uId, String name, BigDecimal thresholdAmount,
+                                           BigDecimal offAmount, int validDays);
 }

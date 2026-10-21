@@ -143,6 +143,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     @Autowired
     private OrderStatsHelper orderStatsHelper;
 
+    @Autowired
+    private MessageNotifyHelper messageNotifyHelper;
+
     @Override
     public ResponseDto<OrderTimeoutVO> listTimeoutWarning() {
         return ResponseDto.success(buildTimeoutWarning(null));
@@ -394,6 +397,11 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             return ResponseDto.error(MSG_STATUS_CHANGED);
         }
         registerStatusMailAfterCommit(exists.getAddPerson(), exists.getOrderNo(), SHIPPED_ORDER_STATUS);
+        messageNotifyHelper.pushAfterCommit(exists.getUId(), MessageNotifyHelper.TYPE_ORDER,
+                "订单已发货",
+                "您的订单 " + exists.getOrderNo() + " 已由" + shippingCompany.trim() + "发出，运单号 "
+                        + trackingNo.trim() + "，请注意查收。",
+                String.valueOf(id));
         return ResponseDto.success();
     }
 
@@ -617,6 +625,69 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             return null;
         }
         return order;
+    }
+
+    /**
+     * 模拟物流轨迹：无表无定时任务，节点由「当前时间 - 发货时间」确定性推导，
+     * 演示时可改 t_order.ship_time 观察推进；确认收货（状态2/receive_time）强制签收。
+     */
+    @Override
+    public ResponseDto<Map<String, Object>> getLogistics(Integer id, OrderScope scope) {
+        Order order = getVisibleById(id, scope);
+        if (order == null) {
+            return ResponseDto.error(MSG_ORDER_NOT_FOUND);
+        }
+        if (order.getShipTime() == null) {
+            return ResponseDto.error("订单尚未发货");
+        }
+        Map<String, Object> result = new HashMap<>();
+        result.put("shippingCompany", order.getShippingCompany());
+        result.put("trackingNo", order.getTrackingNo());
+        result.put("shipTime", order.getShipTime());
+        result.put("orderStatus", order.getOrderStatus());
+        result.put("nodes", buildLogisticsNodes(order));
+        return ResponseDto.success(result);
+    }
+
+    /** 揽收/运输/派送节点距发货时间的偏移（小时） */
+    private static final long LOGISTICS_HOURS_PICKED = 1L;
+    private static final long LOGISTICS_HOURS_TRANSIT = 8L;
+    private static final long LOGISTICS_HOURS_DELIVERING = 32L;
+    private static final long LOGISTICS_HOURS_DELIVERED = 56L;
+
+    /**
+     * 组装时间线节点：已达节点带实际时间，未达节点带预计时间。
+     */
+    private List<Map<String, Object>> buildLogisticsNodes(Order order) {
+        Date shipTime = order.getShipTime();
+        long hours = (System.currentTimeMillis() - shipTime.getTime()) / 3600000L;
+        boolean delivered = Objects.equals(order.getOrderStatus(), COMPLETE_ORDER_STATUS)
+                || order.getReceiveTime() != null;
+        List<Map<String, Object>> nodes = new ArrayList<>();
+        nodes.add(node("已揽收", "快递员已揽收，包裹进入" + order.getShippingCompany() + "运转体系",
+                plusHours(shipTime, LOGISTICS_HOURS_PICKED), true));
+        nodes.add(node("运输中", "包裹已从发货地发出，正发往目的地城市",
+                plusHours(shipTime, LOGISTICS_HOURS_TRANSIT), hours >= LOGISTICS_HOURS_TRANSIT));
+        nodes.add(node("派送中", "包裹已到达目的地网点，快递员正在派送",
+                plusHours(shipTime, LOGISTICS_HOURS_DELIVERING), hours >= LOGISTICS_HOURS_DELIVERING));
+        Date deliveredTime = order.getReceiveTime() != null
+                ? order.getReceiveTime() : plusHours(shipTime, LOGISTICS_HOURS_DELIVERED);
+        nodes.add(node("已签收", "包裹已签收，感谢您在本店购物",
+                deliveredTime, delivered || hours >= LOGISTICS_HOURS_DELIVERED));
+        return nodes;
+    }
+
+    private static Map<String, Object> node(String title, String desc, Date time, boolean reached) {
+        Map<String, Object> item = new HashMap<>();
+        item.put("title", title);
+        item.put("desc", desc);
+        item.put("time", time);
+        item.put("reached", reached);
+        return item;
+    }
+
+    private static Date plusHours(Date base, long hours) {
+        return new Date(base.getTime() + hours * 3600000L);
     }
 
     /**

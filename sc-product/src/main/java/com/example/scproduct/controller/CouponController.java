@@ -123,4 +123,21 @@ public class CouponController {
         }
         return couponService.restore(couponId);
     }
+
+    /**
+     * 内部：积分兑换发券（sc-user 经 Feign 调用）。每次兑换独立隐藏模板 + 直发用户券。
+     */
+    @PostMapping("/inner/issue")
+    public ResponseDto<UserCoupon> issue(
+            @RequestParam("uId") Integer uId,
+            @RequestParam("name") String name,
+            @RequestParam("thresholdAmount") BigDecimal thresholdAmount,
+            @RequestParam("offAmount") BigDecimal offAmount,
+            @RequestParam("validDays") int validDays,
+            @RequestHeader(value = AuthConstant.HEADER_X_USER_TYPE, required = false) Integer headerUType) {
+        if (headerUType != null && headerUType == AuthConstant.U_TYPE_CUSTOMER) {
+            return ResponseDto.error("无权执行该操作");
+        }
+        return couponService.issueForPoints(uId, name, thresholdAmount, offAmount, validDays);
+    }
 }

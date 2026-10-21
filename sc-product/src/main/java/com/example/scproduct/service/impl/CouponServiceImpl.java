@@ -19,6 +19,7 @@ import org.redisson.client.codec.StringCodec;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import response.ResponseDto;
 
 import java.math.BigDecimal;
@@ -343,6 +344,44 @@ public class CouponServiceImpl extends ServiceImpl<CouponTemplateMapper, CouponT
         redissonClient.getScript(StringCodec.INSTANCE).eval(
                 RScript.Mode.READ_WRITE, CLAIM_ROLLBACK_LUA, RScript.ReturnType.INTEGER,
                 keys, String.valueOf(uId), restoreStock ? "1" : "0");
+    }
+
+    /**
+     * 积分兑换发券：每次兑换创建独立隐藏模板（status=0 不进领券中心、不播种 Redis 库存），
+     * 再直发用户券；券的有效期/门槛/减免按入参落模板，下单锁定时按模板规则正常计算。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public ResponseDto<UserCoupon> issueForPoints(Integer uId, String name, BigDecimal thresholdAmount,
+                                                  BigDecimal offAmount, int validDays) {
+        if (uId == null || name == null || name.trim().isEmpty()
+                || offAmount == null || offAmount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException(MSG_PARAM_REQUIRED);
+        }
+        Date now = new Date();
+        Date validEnd = new Date(now.getTime() + Math.max(validDays, 1) * 24L * 3600 * 1000);
+        CouponTemplate template = new CouponTemplate();
+        template.setMerchantId(0);
+        template.setName(name.trim());
+        template.setType(1);
+        template.setThresholdAmount(thresholdAmount == null ? BigDecimal.ZERO : thresholdAmount);
+        template.setOffAmount(offAmount);
+        template.setTotalCount(1);
+        template.setRemainCount(0);
+        template.setValidStart(now);
+        template.setValidEnd(validEnd);
+        // 兑换券不进领券中心（center 只取 status=1），但仍可被锁定/核销（锁定只校验用户券状态与有效期）
+        template.setStatus(0);
+        template.setCreateTime(now);
+        templateMapper.insert(template);
+
+        UserCoupon coupon = new UserCoupon();
+        coupon.setTemplateId(template.getId());
+        coupon.setUId(uId);
+        coupon.setStatus(UC_UNUSED);
+        coupon.setClaimTime(now);
+        userCouponMapper.insert(coupon);
+        return ResponseDto.success(coupon);
     }
 
     /** 余量置 0 而非删 key：删了之后在途补偿的 INCR 会把它重建成 1（同秒杀） */

@@ -8,6 +8,9 @@ import org.springframework.web.cors.reactive.CorsWebFilter;
 import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
 import org.springframework.web.util.pattern.PathPatternParser;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * 网关全局跨域配置。
  */
@@ -17,7 +20,12 @@ public class CorsConfig {
     /** 预检请求（OPTIONS）结果的浏览器缓存时长：1 小时 */
     private static final long PREFLIGHT_MAX_AGE_SECONDS = 3600L;
 
-    @Value("${security.cors.allowed-origins:http://localhost:8888}")
+    /**
+     * 允许的来源，支持通配模式。默认 http://*:8888：前端代理固定 8888 端口，
+     * 但浏览器对 POST 总是携带 Origin 头，用 localhost 或局域网 IP 访问时 Origin 不同，
+     * 若只配 localhost 精确值，IP 访问的所有写操作都会被 CORS 过滤器以 403 拒绝。
+     */
+    @Value("${security.cors.allowed-origins:http://*:8888}")
     private String allowedOrigins;
 
     /**
@@ -26,9 +34,13 @@ public class CorsConfig {
     @Bean
     public CorsWebFilter corsWebFilter() {
         CorsConfiguration config = new CorsConfiguration();
+        List<String> origins = new ArrayList<>();
         for (String origin : allowedOrigins.split(",")) {
-            config.addAllowedOrigin(origin.trim());
+            if (!origin.trim().isEmpty()) {
+                origins.add(origin.trim());
+            }
         }
+        config.setAllowedOriginPatterns(origins);
         config.addAllowedMethod("GET");
         config.addAllowedMethod("POST");
         config.addAllowedMethod("PUT");

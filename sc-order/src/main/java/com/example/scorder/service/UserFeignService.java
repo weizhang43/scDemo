@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import response.ResponseDto;
 
 @Component
@@ -30,4 +31,13 @@ public interface UserFeignService {
 
     @PostMapping("/user/mail/sendMail")
     ResponseDto sendMail(@RequestBody @Validated OrderMessage orderMessage);
+
+    /**
+     * 支付成功后为顾客加积分（best-effort，订单号幂等）。
+     */
+    @PostMapping("/user/points/earn")
+    ResponseDto<Object> addPoints(@RequestParam("uId") Integer uId,
+                                  @RequestParam("orderNo") String orderNo,
+                                  @RequestParam("points") Integer points,
+                                  @RequestParam(value = "remark", required = false) String remark);
 }

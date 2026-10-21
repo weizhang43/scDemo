@@ -79,6 +79,9 @@ public class AfterSaleServiceImpl extends ServiceImpl<AfterSaleMapper, AfterSale
     @Autowired
     private MockPayGatewayClient gatewayClient;
 
+    @Autowired
+    private MessageNotifyHelper messageNotifyHelper;
+
     /**
      * 顾客申请售后：校验订单可申请后落工单；唯一键冲突时复用被拒绝/已取消的旧工单重新申请。
      */
@@ -229,6 +232,9 @@ public class AfterSaleServiceImpl extends ServiceImpl<AfterSaleMapper, AfterSale
             throw new BusinessException("拒绝原因不能超过 " + REJECT_REASON_MAX_LENGTH + " 字");
         }
         int rows = afterSaleMapper.casReject(id, record.getVersion(), reject);
+        if (rows > 0) {
+            notifyAuditResult(record, false, reject);
+        }
         return rows > 0 ? ResponseDto.success(null) : ResponseDto.error(MSG_STATUS_CHANGED);
     }
 
@@ -256,6 +262,7 @@ public class AfterSaleServiceImpl extends ServiceImpl<AfterSaleMapper, AfterSale
         }
         insertRestoreMsg(record.getOId());
         registerRefundAfterCommit(id, payRecord);
+        notifyAuditResult(record, true, null);
         return ResponseDto.success(null);
     }
 
@@ -274,6 +281,24 @@ public class AfterSaleServiceImpl extends ServiceImpl<AfterSaleMapper, AfterSale
             orderStockRestoreMsgMapper.insert(msg);
         } catch (DuplicateKeyException dupEx) {
             LOGGER.info("售后订单 {} 回库存消息已存在，跳过写入", oId, dupEx);
+        }
+    }
+
+    /**
+     * 审核结果站内通知申请人：同意提示退款中，拒绝附拒绝原因。注册在当前事务提交后 best-effort 送达。
+     */
+    private void notifyAuditResult(AfterSale record, boolean approve, String rejectReason) {
+        final Integer uId = record.getUId();
+        final String orderNo = record.getOrderNo() == null ? String.valueOf(record.getOId()) : record.getOrderNo();
+        final String bizId = String.valueOf(record.getOId());
+        if (approve) {
+            messageNotifyHelper.pushAfterCommit(uId, MessageNotifyHelper.TYPE_AFTERSALE,
+                    "售后审核通过", "订单 " + orderNo + " 的售后申请已同意，退款将原路退回，请留意到账。",
+                    bizId);
+        } else {
+            messageNotifyHelper.pushAfterCommit(uId, MessageNotifyHelper.TYPE_AFTERSALE,
+                    "售后申请被拒绝", "订单 " + orderNo + " 的售后申请未通过，原因：" + rejectReason,
+                    bizId);
         }
     }
 

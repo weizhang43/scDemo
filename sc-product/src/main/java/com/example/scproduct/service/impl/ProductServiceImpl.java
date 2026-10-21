@@ -36,6 +36,7 @@ import java.io.FileOutputStream;
 import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
@@ -180,6 +181,9 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
                 query.getOrigin(), query.getIsExpired(), scope);
         // status 只加在列表查询上，不进 buildListWrapper：导出沿用旧的「不限上下架」语义
         queryWrapper.eq(query.getStatus() != null, Product::getStatus, query.getStatus());
+        queryWrapper.ge(query.getMinPrice() != null, Product::getPrice, query.getMinPrice());
+        queryWrapper.le(query.getMaxPrice() != null, Product::getPrice, query.getMaxPrice());
+        queryWrapper.gt(query.getHasStock() != null && query.getHasStock() == 1, Product::getStock, 0);
         if (query.getCategoryId() != null) {
             // 一级分类展开为「自身 + 子分类」：挂在二级分类上的商品也要被一级分类筛中
             List<Integer> ids = new ArrayList<>(categoryMapper.selectChildIds(query.getCategoryId()));
@@ -189,6 +193,25 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product> impl
         IPage<Product> result = productMapper.selectPageWithStats(page, queryWrapper, query.getSortBy());
         promotionService.fillEffectivePrice(result.getRecords());
         return ResponseDto.success(result);
+    }
+
+    /**
+     * 搜索联想：只召回在售商品，按「前缀匹配优先、其余包含匹配」排序，轻量列输出。
+     */
+    @Override
+    public List<Product> searchSuggest(String keyword, int limit) {
+        if (keyword == null || keyword.trim().isEmpty()) {
+            return Collections.emptyList();
+        }
+        String kw = keyword.trim();
+        List<Product> list = productMapper.selectList(new LambdaQueryWrapper<Product>()
+                .select(Product::getPId, Product::getPName, Product::getPrice, Product::getImageUrl)
+                .like(Product::getPName, kw)
+                .eq(Product::getStatus, STATUS_ON_SALE)
+                .last("LIMIT " + Math.min(Math.max(limit, 1), 20)));
+        // 前缀命中的排前面，其余保持数据库返回顺序
+        list.sort(Comparator.comparing(p -> p.getPName() != null && p.getPName().startsWith(kw) ? 0 : 1));
+        return list;
     }
 
     /**
