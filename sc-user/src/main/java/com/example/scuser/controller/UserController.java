@@ -5,6 +5,7 @@ import com.curry.model.annotation.OpLog;
 import com.curry.model.auth.AuthConstant;
 import com.curry.model.auth.LoginUser;
 import com.example.scuser.dto.RegisterRequest;
+import com.example.scuser.service.LoginLogService;
 import com.example.scuser.service.TokenService;
 import com.example.scuser.service.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,6 +20,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import response.ResponseDto;
+
+import javax.servlet.http.HttpServletRequest;
 
 import javax.servlet.http.HttpServletResponse;
 import java.util.HashMap;
@@ -37,6 +40,9 @@ public class UserController {
     @Autowired
     private TokenService tokenService;
 
+    @Autowired
+    private LoginLogService loginLogService;
+
     /**
      * 用户注册（商家/顾客），需要邮箱验证码。
      */
@@ -52,7 +58,8 @@ public class UserController {
     @PostMapping("/login")
     public ResponseDto<User> login(@RequestParam("uName") String uName,
                                   @RequestParam("password") String password,
-                                  @RequestParam(value = "uType", required = false) Integer uType) {
+                                  @RequestParam(value = "uType", required = false) Integer uType,
+                                  HttpServletRequest request) {
         ResponseDto<User> result = userService.login(uName, password, uType);
         boolean success = ResponseDto.SUCCESS_CODE.equals(result.getCode())
                 && result.getDaoResult() != null;
@@ -64,8 +71,25 @@ public class UserController {
                     user.getRealName(), user.getUType()));
             data.put("token", token);
             data.put("tokenType", "Bearer");
+            loginLogService.recordLogin(uName, user.getUType(), getClientIp(request), 1, "登录成功");
+        } else {
+            loginLogService.recordLogin(uName, uType, getClientIp(request), 0, result.getMsg());
         }
         return result;
+    }
+
+    private String getClientIp(HttpServletRequest request) {
+        String ip = request.getHeader("X-Forwarded-For");
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getHeader("X-Real-IP");
+        }
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getRemoteAddr();
+        }
+        if (ip != null && ip.contains(",")) {
+            ip = ip.split(",")[0].trim();
+        }
+        return ip;
     }
 
     /**

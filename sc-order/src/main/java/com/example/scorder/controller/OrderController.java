@@ -255,6 +255,20 @@ public class OrderController {
     }
 
     /**
+     * 查询当前顾客秒杀订单列表（含活动信息+订单状态），供前端「我的秒杀」tab 展示。
+     */
+    @GetMapping("/seckill/my-records")
+    public ResponseDto<Object> mySeckillRecords(
+            @RequestParam(value = "pageNo", defaultValue = "1") int pageNo,
+            @RequestParam(value = "pageSize", defaultValue = "10") int pageSize) {
+        OrderScope scope = OrderScopeResolver.current();
+        if (!scope.isCustomer()) {
+            return ResponseDto.error("无权限查询秒杀记录");
+        }
+        return ResponseDto.success(orderService.mySeckillRecords(scope.getOwnerUId(), pageNo, pageSize));
+    }
+
+    /**
      * 按订单主键更新订单信息。
      */
     @PutMapping

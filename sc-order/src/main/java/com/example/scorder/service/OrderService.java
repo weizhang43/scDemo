@@ -128,4 +128,9 @@ public interface OrderService extends IService<Order> {
      * 秒杀落库（异步段，消费者调用）：Seata 全局事务下创建订单+扣真实库存，失败则补偿回滚 Redis 预扣。
      */
     void processSeckillOrder(SeckillRequest message);
+
+    /**
+     * 查询顾客秒杀订单记录（含订单状态）。
+     */
+    Object mySeckillRecords(Integer uId, int pageNo, int pageSize);
 }

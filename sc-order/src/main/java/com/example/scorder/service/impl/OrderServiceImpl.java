@@ -1,6 +1,7 @@
 package com.example.scorder.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.curry.model.Order;
@@ -89,6 +90,10 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     private static final String MSG_ORDER_ID_REQUIRED = "订单ID不能为空";
     /** CAS 更新失败（状态已被并发变更） */
     private static final String MSG_STATUS_CHANGED = "订单状态已变更，请刷新后重试";
+    /** 分页默认每页大小 */
+    private static final int DEFAULT_PAGE_SIZE = 10;
+    /** 秒杀订单来源标识 */
+    private static final String ORDER_SOURCE_SECKILL = "SECKILL";
 
     /** 下单防重锁：等待时长（秒） */
     private static final long PLACE_LOCK_WAIT_SECONDS = 3L;
@@ -783,5 +788,20 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     @GlobalTransactional
     public void processSeckillOrder(SeckillRequest req) {
         seckillOrderHelper.process(req);
+    }
+
+    @Override
+    public Object mySeckillRecords(Integer uId, int pageNo, int pageSize) {
+        Page<Order> page = new Page<>(pageNo <= 0 ? 1 : pageNo, pageSize <= 0 ? DEFAULT_PAGE_SIZE : pageSize);
+        LambdaQueryWrapper<Order> wrapper = new LambdaQueryWrapper<Order>()
+                .eq(Order::getUId, uId)
+                .eq(Order::getSource, ORDER_SOURCE_SECKILL)
+                .orderByDesc(Order::getCreateTime);
+        IPage<Order> result = baseMapper.selectPage(page, wrapper);
+        Map<String, Object> map = new HashMap<>();
+        map.put("records", result.getRecords());
+        map.put("total", result.getTotal());
+        map.put("pages", result.getPages());
+        return map;
     }
 }

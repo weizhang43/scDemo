@@ -63,6 +63,10 @@ public class Order {
     @TableField(exist = false)
     private Integer afterSaleStatus;
 
+    /** 订单来源：NORMAL-普通下单 SECKILL-秒杀 */
+    @TableField("source")
+    private String source;
+
     @Version
     @TableField("version")
     private Integer version;
