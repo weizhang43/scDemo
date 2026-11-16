@@ -28,3 +28,13 @@ spring:
     # 连接超时时间
     connection-timeout: 15000ms
 
+# RocketMQ：消费 sc-pay 的支付通知消息
+# 与 sc-pay 配置共用同一 name-server 才能投递/消费对端消息
+rocketmq:
+  name-server: ${ROCKETMQ_NAME_SERVER:localhost:9876}
+  # sc-order 仅为消费方，但 rocketmq-spring-boot-starter 要求 producer.group 必填，
+  # 这里给个占位组名，本模块不主动发送 RocketMQ 消息
+  producer:
+    group: sc-order-rocketmq-producer-placeholder
+    send-message-timeout: 3000
+

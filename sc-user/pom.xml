@@ -117,6 +117,12 @@
             <groupId>com.example</groupId>
             <artifactId>sc-common-log</artifactId>
         </dependency>
+
+        <!-- RabbitMQ：消费 sc-common-log 投递的操作日志消息（其他模块的 @OpLog 经 MQ 汇聚到 sc-user 落库） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

@@ -12,7 +12,7 @@
     <artifactId>sc-common-log</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>sc-common-log</name>
-    <description>操作日志共享 starter：@OpLog 切面 + Feign 转发到 sc-user 落库</description>
+    <description>操作日志共享 starter：@OpLog 切面 + RabbitMQ 投递到 sc-user 落库（Feign 作为 fallback）</description>
 
     <dependencies>
         <!-- 公共实体（OperationLog / @OpLog / AuthConstant） -->
@@ -33,7 +33,7 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
-        <!-- Feign + 负载均衡：把日志转发给 sc-user -->
+        <!-- Feign + 负载均衡：fallback 出口（op-log.sink=feign 时启用） -->
         <dependency>
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-openfeign</artifactId>
@@ -41,6 +41,12 @@
         <dependency>
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-loadbalancer</artifactId>
+        </dependency>
+
+        <!-- RabbitMQ：默认出口，把操作日志投递到 sc-user -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
         </dependency>
     </dependencies>
 

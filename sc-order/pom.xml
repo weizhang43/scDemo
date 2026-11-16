@@ -98,6 +98,13 @@
             <artifactId>spring-boot-starter-amqp</artifactId>
         </dependency>
 
+        <!-- RocketMQ：消费 sc-pay 的支付通知消息 -->
+        <dependency>
+            <groupId>org.apache.rocketmq</groupId>
+            <artifactId>rocketmq-spring-boot-starter</artifactId>
+            <version>2.2.2</version>
+        </dependency>
+
         <!-- EasyExcel 导出 -->
         <dependency>
             <groupId>com.alibaba</groupId>

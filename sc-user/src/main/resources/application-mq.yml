@@ -1,0 +1,24 @@
+spring:
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: ${RABBITMQ_USERNAME:admin}
+    password: ${RABBITMQ_PASSWORD}
+    virtual-host: /
+    listener:
+      simple:
+        # 消费者并发数：操作日志 QPS 不高，2 个并发足够
+        concurrency: 2
+        max-concurrency: 5
+        # 手动确认模式：消费失败 NACK 不 requeue，触发 retry 重试 3 次后死信
+        acknowledge-mode: manual
+        prefetch: 20
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 1000ms
+          multiplier: 2
+        default-requeue-rejected: false
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    connection-timeout: 15000ms

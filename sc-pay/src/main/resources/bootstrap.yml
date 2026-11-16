@@ -36,7 +36,19 @@ pay:
   # 商户签名密钥，须与 sc-order 一致
   secret: ${SC_PAY_SECRET:sc-pay-secret-dev}
 mock-pay:
-  # 支付结果确定后延迟多久发起异步回调（毫秒）
+  # 支付结果确定后延迟多久发起异步回调（毫秒，参考值，实际延迟由 RocketMQ 延迟级别决定）
   notify-delay-ms: 1000
   # 是否故意重复发送回调（演示商户侧幂等）
   notify-duplicate: false
+
+# RocketMQ：支付通知链路使用
+# name-server 默认本地部署，生产环境通过 ROCKETMQ_NAME_SERVER 环境变量注入集群地址
+rocketmq:
+  name-server: ${ROCKETMQ_NAME_SERVER:localhost:9876}
+  producer:
+    # 生产组：仅用于 broker 侧统计
+    group: pay-notify-producer-group
+    # 发送超时（毫秒）：支付接口对延迟不敏感，3s 足够
+    send-message-timeout: 3000
+    # 同步发送失败时客户端内部重试次数（与消费端重试不同）
+    retry-times-when-send-failed: 2
