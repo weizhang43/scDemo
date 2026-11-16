@@ -781,12 +781,24 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     }
 
     /**
-     * 秒杀落库异步段（由消费者调用）：在 Seata 全局事务下扣真实库存 + 创建订单 + 写订单商品明细。
+     * 秒杀落库异步段（由 RocketMQ 消费者 SeckillOrderMqListener 调用）：
+     * 在 Seata 全局事务下扣真实库存 + 创建订单 + 写订单商品明细。
      * 成功写 SUCCESS 结果；失败则补偿回滚 Redis 预扣并允许用户重试，再抛异常触发 Seata 全局回滚订单与真实库存。
+     *
+     * 幂等守卫：RocketMQ 集群模式至少投递一次，ACK 丢失或重试可能重复调用本方法。
+     * 入口检查 Redis 结果，若已为 SUCCESS/FAILED 终态则直接返回，避免重复落库与重复 Seata 全局事务。
+     * 注意：listener 已做一次幂等检查，这里再检查一次是 defense in depth ——
+     * 即便 listener 与本方法之间状态被并发改写，最后一道守卫也能挡住重复落库。
      */
     @Override
     @GlobalTransactional
     public void processSeckillOrder(SeckillRequest req) {
+        SeckillResultVO existing = seckillOrderHelper.readResult(req.getuId(), req.getActivityId());
+        if (existing != null && !"PENDING".equals(existing.getStatus())) {
+            LOGGER.warn("[seckill] processSeckillOrder 幂等跳过 uId={}, activityId={}, status={}",
+                    req.getuId(), req.getActivityId(), existing.getStatus());
+            return;
+        }
         seckillOrderHelper.process(req);
     }
 

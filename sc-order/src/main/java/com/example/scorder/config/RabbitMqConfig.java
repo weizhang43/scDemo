@@ -27,6 +27,13 @@ public class RabbitMqConfig {
     public static final String QUEUE_ORDER = "queue.order.delay";
     public static final String QUEUE_EMAIL = "queue.email";
 
+    /**
+     * 秒杀下单队列。消费失败的消息死信到 dlx_queue（复用订单超时的死信交换机）。
+     * 不设消息级 TTL：秒杀消息没有"超时"语义，落库失败靠消费端 NACK + retry 重试，
+     * 重试 max-attempts 次仍失败的消息由 default-requeue-rejected=false 自动死信。
+     */
+    public static final String QUEUE_SECKILL_ORDER = "queue.seckill.order";
+
     // ========== 交换机定义 ==========
     public static final String EXCHANGE_DIRECT = "exchange.direct";
     public static final String EXCHANGE_TOPIC = "exchange.topic";
@@ -35,6 +42,9 @@ public class RabbitMqConfig {
     // ========== Routing Key ==========
     public static final String ROUTING_KEY_ORDER = "routing.order";
     public static final String ROUTING_KEY_EMAIL = "routing.email";
+
+    /** 秒杀队列路由 key：走 direct 交换机，与订单/邮件队列平级 */
+    public static final String ROUTING_KEY_SECKILL_ORDER = "routing.seckill.order";
 
     /** topic 交换机的订单路由匹配模式：匹配 order 开头的多级路由键，如 order.create.success */
     public static final String TOPIC_PATTERN_ORDER = "order.#";
@@ -94,6 +104,19 @@ public class RabbitMqConfig {
         return QueueBuilder.durable(QUEUE_EMAIL).build();
     }
 
+    /**
+     * 秒杀下单队列：消费失败死信到 dlx_queue（与订单超时取消共用死信路径）。
+     * x-dead-letter-exchange/routing-key 指向 dlx_exchange/dlx_routing_key，
+     * 消费端 basicNack(requeue=false) 时消息自动转发到死信交换机。
+     */
+    @Bean
+    public Queue seckillOrderQueue() {
+        return QueueBuilder.durable(QUEUE_SECKILL_ORDER)
+                .withArgument("x-dead-letter-exchange", DLX_EXCHANGE)
+                .withArgument("x-dead-letter-routing-key", DLX_ROUTING_KEY)
+                .build();
+    }
+
 
     /**
      * 直连交换机绑定订单队列
@@ -117,6 +140,17 @@ public class RabbitMqConfig {
                 .bind(emailQueue())
                 .to(directExchange())
                 .with(ROUTING_KEY_EMAIL);
+    }
+
+    /**
+     * 直连交换机绑定秒杀下单队列
+     */
+    @Bean
+    public Binding seckillOrderBinding() {
+        return BindingBuilder
+                .bind(seckillOrderQueue())
+                .to(directExchange())
+                .with(ROUTING_KEY_SECKILL_ORDER);
     }
 
     /**
