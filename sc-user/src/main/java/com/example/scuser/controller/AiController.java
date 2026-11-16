@@ -41,6 +41,10 @@ public class AiController {
     @Value("${scdemo.chat.base-url:http://localhost:9000}")
     private String chatBaseUrl;
 
+    /** 周报数据接口地址（sc-order /order/ai/weekly-briefing），生产环境通过 Nacos 注入 */
+    @Value("${scdemo.weekly-briefing-url:http://localhost:8000/order/ai/weekly-briefing}")
+    private String weeklyBriefingUrl;
+
     @Value("${inner.auth.token:}")
     private String innerToken;
 
@@ -75,7 +79,7 @@ public class AiController {
 
     /**
      * AI 经营周报 SSE：拉取近7天商家快报拼成 prompt 后透传。
-     * 周报数据来源在 sc-order，sc-user 通过 RestTemplate 直接调网关（localhost:8000/order/ai/weekly-briefing）。
+     * 周报数据来源在 sc-order，sc-user 通过 RestTemplate 直接调网关（地址由 scdemo.weekly-briefing-url 配置）。
      */
     @GetMapping(value = "/chat/weeklyReport", produces = "text/event-stream;charset=UTF-8")
     public ResponseEntity<StreamingResponseBody> weeklyReport(
@@ -149,7 +153,6 @@ public class AiController {
      * 调 sc-order /order/ai/weekly-briefing 拿快报，转成 prompt 友好的文本。
      */
     private String fetchWeeklyBriefing(String auth) {
-        String url = "http://localhost:8000/order/ai/weekly-briefing";
         try {
             org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
             if (auth != null && !auth.isEmpty()) {
@@ -157,7 +160,7 @@ public class AiController {
             }
             headers.set(AuthConstant.HEADER_X_INNER_TOKEN, innerToken);
             org.springframework.http.HttpEntity<Void> req = new org.springframework.http.HttpEntity<>(headers);
-            String body = restTemplate.exchange(url, HttpMethod.GET, req, String.class).getBody();
+            String body = restTemplate.exchange(weeklyBriefingUrl, HttpMethod.GET, req, String.class).getBody();
             return body == null ? "无快报数据" : body;
         } catch (Exception e) {
             return "拉取近7天快报失败：" + e.getMessage();

@@ -36,7 +36,7 @@ public class RegisterRequest {
     public User toUser() {
         User user = new User();
         user.setUName(uName);
-        user.setPassword(password);
+        user.setPasswordHash(password);
         user.setUType(uType);
         user.setRealName(realName);
         user.setGender(gender);

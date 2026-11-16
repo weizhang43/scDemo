@@ -55,6 +55,9 @@ public class WorkReportServiceImpl extends ServiceImpl<WorkReportMapper, WorkRep
     /** git log 子进程最长等待秒数 */
     private static final long GIT_LOG_TIMEOUT_SECONDS = 10L;
 
+    /** git log 输出格式占位符，仅取提交标题（subject） */
+    private static final String GIT_LOG_FORMAT = "--pretty=%s";
+
     /** HTML 段落闭合标签 */
     private static final String P_END = "</p>";
 
@@ -337,9 +340,14 @@ public class WorkReportServiceImpl extends ServiceImpl<WorkReportMapper, WorkRep
             LOGGER.warn("[日报模板] 仓库目录不存在: {}", repoPath);
             return subjects;
         }
+        String author = gitProperties.getAuthor();
+        if (!isSafeGitArg(since) || !isSafeGitArg(author)) {
+            LOGGER.warn("[日报模板] git log 参数含非法字符, since={}, author={}", since, author);
+            return subjects;
+        }
         try {
             Process process = new ProcessBuilder("git", "log", "--since=" + since, "--no-merges",
-                    "--author=" + gitProperties.getAuthor(), "--pretty=%s")
+                    "--author=" + author, GIT_LOG_FORMAT)
                     .directory(dir)
                     .redirectErrorStream(true)
                     .start();
@@ -373,5 +381,16 @@ public class WorkReportServiceImpl extends ServiceImpl<WorkReportMapper, WorkRep
 
     private String escapeHtml(String text) {
         return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    /**
+     * 校验 git 命令行参数不含换行/空字节等会破坏参数边界的字符，
+     * ProcessBuilder 虽不走 shell，但参数本身的边界完整性仍需保证。
+     */
+    private boolean isSafeGitArg(String arg) {
+        if (!StringUtils.hasText(arg)) {
+            return false;
+        }
+        return arg.indexOf('\n') < 0 && arg.indexOf('\r') < 0 && arg.indexOf('\0') < 0;
     }
 }

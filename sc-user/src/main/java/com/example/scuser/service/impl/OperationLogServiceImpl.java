@@ -77,21 +77,18 @@ public class OperationLogServiceImpl extends ServiceImpl<OperationLogMapper, Ope
         long start = System.currentTimeMillis();
         response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
         response.setCharacterEncoding("utf-8");
-        ExcelWriter excelWriter = null;
         try {
             String fileName = URLEncoder.encode("操作日志", "UTF-8").replaceAll("\\+", "%20");
             response.setHeader("Content-disposition", "attachment;filename*=UTF-8''" + fileName + ".xlsx");
-            excelWriter = EasyExcel.write(response.getOutputStream(), OperationLogExportVO.class).build();
-            WriteSheet writeSheet = EasyExcel.writerSheet("操作日志").build();
-            long totalRows = exportByIdSlice(uName, module, opType, status, beginTime, endTime,
-                    excelWriter, writeSheet);
-            LOGGER.info("[export] 总行数={}", totalRows);
+            try (ExcelWriter excelWriter = EasyExcel.write(response.getOutputStream(),
+                    OperationLogExportVO.class).build()) {
+                WriteSheet writeSheet = EasyExcel.writerSheet("操作日志").build();
+                long totalRows = exportByIdSlice(uName, module, opType, status, beginTime, endTime,
+                        excelWriter, writeSheet);
+                LOGGER.info("[export] 总行数={}", totalRows);
+            }
         } catch (IOException e) {
             throw new BusinessException("操作日志导出失败", e);
-        } finally {
-            if (excelWriter != null) {
-                excelWriter.finish();
-            }
         }
         LOGGER.info("导出共耗时：{}", System.currentTimeMillis() - start);
     }

@@ -39,7 +39,7 @@ public class MockPayGatewayClient {
     @Value("${pay.gateway.base-url:http://localhost:8000/pay}")
     private String baseUrl;
 
-    @Value("${pay.secret:sc-pay-secret-dev}")
+    @Value("${pay.secret}")
     private String paySecret;
 
     @Value("${pay.notify-url:http://localhost:8000/order/pay/notify}")

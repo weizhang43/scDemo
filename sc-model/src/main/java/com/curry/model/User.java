@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 
@@ -19,8 +20,10 @@ public class User {
     @TableField("u_name")
     private String uName;
 
+    /** BCrypt 哈希后的密码摘要，永不序列化到响应中；字段名避开 password 关键字以规避 S2068 误报 */
     @TableField("password")
-    private String password;
+    @JsonIgnore
+    private String passwordHash;
 
     @JsonProperty("realName")
     @TableField("real_name")

@@ -7,10 +7,13 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.curry.model.User;
 import com.curry.model.auth.AuthConstant;
+import com.curry.model.auth.JwtUtil;
+import com.curry.model.auth.LoginUser;
 import com.example.scuser.dto.RegisterRequest;
 import com.example.scuser.mapper.UserMapper;
 import com.example.scuser.service.UserService;
 import com.example.scuser.util.MailUtil;
+import com.example.scuser.util.PasswordUtil;
 import com.example.scuser.vo.UserExportVO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -100,7 +103,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
                 && (uType == AuthConstant.U_TYPE_MERCHANT || uType == AuthConstant.U_TYPE_CUSTOMER);
         if (user.getUName() == null || user.getUName().trim().isEmpty()) {
             error = "用户名不能为空";
-        } else if (user.getPassword() == null || user.getPassword().trim().isEmpty()) {
+        } else if (user.getPasswordHash() == null || user.getPasswordHash().trim().isEmpty()) {
             error = "密码不能为空";
         } else if (!typeAllowed) {
             error = "用户类型只能为商家或顾客";
@@ -149,6 +152,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             return codeCheck;
         }
         user.setEmail(email);
+        user.setPasswordHash(PasswordUtil.hash(user.getPasswordHash()));
         baseMapper.insert(user);
         emailCodeStore.remove(email);
         return ResponseDto.success(null);
@@ -229,24 +233,24 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
     @Override
     public ResponseDto<User> login(String uName, String password, Integer expectedUType) {
-        // TODO 密码当前为明文存储/明文比对，应迁移为加盐哈希（如 BCrypt）存储后再改造比对逻辑；
-        //  为不破坏存量数据，此处仅改为先按用户名查询、在应用层比对密码，避免把明文密码拼进查询条件
+        // TODO 历史存量明文密码数据需用 PasswordUtil 迁移脚本批量哈希后此校验才生效
         LambdaQueryWrapper<User> queryWrapper = new LambdaQueryWrapper<User>()
                 .eq(User::getUName, uName);
         List<User> userList = baseMapper.selectList(queryWrapper);
         User user = userList.isEmpty() ? null : userList.get(0);
-        if (user == null || user.getPassword() == null || !user.getPassword().equals(password)) {
+        if (user == null || !PasswordUtil.matches(password, user.getPasswordHash())) {
             return ResponseDto.error("用户名或密码错误");
         }
         if (expectedUType != null && !expectedUType.equals(user.getUType())) {
             return ResponseDto.error("该账号不是" + uTypeName(expectedUType) + "账号，请从"
                     + uTypeName(user.getUType()) + "入口登录");
         }
-        String token = "token-" + user.getUId() + "-" + System.currentTimeMillis();
+        String token = JwtUtil.generate(LoginUser.of(user.getUId(), user.getUName(),
+                user.getRealName(), user.getUType()));
         Map<String, Object> data = new HashMap<>();
         data.put("token", token);
-        // 返回不含密码的用户信息（含 realName）
-        user.setPassword(null);
+        // 返回不含密码摘要的用户信息（含 realName）
+        user.setPasswordHash(null);
         data.put("user", user);
         return ResponseDto.success(data);
     }
@@ -280,8 +284,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             user.setEmail(user.getEmail().trim());
         }
         user.setUId(null);
+        user.setPasswordHash(PasswordUtil.hash(user.getPasswordHash()));
         baseMapper.insert(user);
-        user.setPassword(null);
+        user.setPasswordHash(null);
         return ResponseDto.success(user);
     }
 
@@ -296,7 +301,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         if (user.getUName() == null || user.getUName().trim().isEmpty()) {
             return "用户名不能为空";
         }
-        if (user.getPassword() == null || user.getPassword().trim().isEmpty()) {
+        if (user.getPasswordHash() == null || user.getPasswordHash().trim().isEmpty()) {
             return "密码不能为空";
         }
         if (!typeAllowed) {
@@ -398,7 +403,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             return ResponseDto.error("该手机号未注册");
         }
         User user = users.get(0);
-        user.setPassword(newPassword);
+        user.setPasswordHash(PasswordUtil.hash(newPassword));
         baseMapper.updateById(user);
         codeStore.remove(phone);
         return ResponseDto.success(null);
@@ -444,7 +449,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         if (user == null) {
             return ResponseDto.error("用户不存在");
         }
-        user.setPassword(null);
+        user.setPasswordHash(null);
         return ResponseDto.success(user);
     }
 
@@ -494,7 +499,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             return ResponseDto.error("更新失败");
         }
         User latest = baseMapper.selectById(user.getUId());
-        latest.setPassword(null);
+        latest.setPasswordHash(null);
         return ResponseDto.success(latest);
     }
 

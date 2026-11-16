@@ -88,6 +88,12 @@
             <artifactId>spring-boot-starter-mail</artifactId>
         </dependency>
 
+        <!-- BCrypt 密码哈希（spring-security-crypto 仅含加密工具，不引入完整 Spring Security） -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-crypto</artifactId>
+        </dependency>
+
         <!-- EasyExcel 导出 -->
         <dependency>
             <groupId>com.alibaba</groupId>

@@ -99,7 +99,7 @@ public class PayServiceImpl implements PayService {
     @Autowired
     private UserFeignService userFeignService;
 
-    @Value("${pay.secret:sc-pay-secret-dev}")
+    @Value("${pay.secret}")
     private String paySecret;
 
     /**
