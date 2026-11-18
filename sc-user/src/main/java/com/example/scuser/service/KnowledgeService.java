@@ -3,6 +3,7 @@ package com.example.scuser.service;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.curry.model.Knowledge;
 import com.curry.model.KnowledgeNote;
+import com.curry.model.KnowledgeTagStat;
 import response.ResponseDto;
 
 import java.util.List;
@@ -26,6 +27,9 @@ public interface KnowledgeService extends IService<Knowledge> {
     /** 随机取一题；tag/type 非空时按当前范围过滤 */
     ResponseDto<Knowledge> random(Integer tag, String type);
 
+    /** 按题号（在当前筛选范围内的序号，从 1 开始）跳转到对应题；越界返回 null */
+    ResponseDto<Knowledge> byIndex(Integer index, Integer tag, String type);
+
     /** 查看答案时调用，累加查看次数并记录最后查看时间 */
     ResponseDto<Knowledge> view(Long id);
 
@@ -42,4 +46,7 @@ public interface KnowledgeService extends IService<Knowledge> {
     ResponseDto<KnowledgeNote> deleteNote(Long noteId);
 
     ResponseDto<KnowledgeNote> listNotes(Long knowledgeId);
+
+    /** 按标签统计总数与已查看题数（view_count > 0 视为已学），用于标签下拉框进度展示 */
+    ResponseDto<KnowledgeTagStat> tagStats();
 }

@@ -2,9 +2,11 @@ package com.example.scuser.service.impl;
 
 import com.alibaba.nacos.common.utils.CollectionUtils;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.curry.model.Knowledge;
 import com.curry.model.KnowledgeNote;
+import com.curry.model.KnowledgeTagStat;
 import com.example.scuser.mapper.KnowledgeMapper;
 import com.example.scuser.mapper.KnowledgeNoteMapper;
 import com.example.scuser.service.KnowledgeService;
@@ -41,6 +43,10 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeMapper, Knowledge
      * 已忽略类型
      */
     private static final String IGNORED_TYPE = "ignored";
+    /**
+     * 所有题（含已掌握）
+     */
+    private static final String ALL_TYPE = "all";
     /**
      * 已收藏状态
      */
@@ -84,12 +90,16 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeMapper, Knowledge
         if (next == null) {
             next = selectNextAfter(0L, tag, type);
         }
+        fillPosition(next, tag, type);
         return next == null ? ResponseDto.error("暂无知识点，请先添加") : ResponseDto.success(next);
     }
 
     @Override
     public ResponseDto<Knowledge> getById(Long id, String type) {
         Knowledge knowledge = requireByType(id, type);
+        if (knowledge != null) {
+            fillPosition(knowledge, null, type);
+        }
         return knowledge == null ? ResponseDto.error("知识点不存在") : ResponseDto.success(knowledge);
     }
 
@@ -117,6 +127,7 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeMapper, Knowledge
         if (prev == null) {
             prev = selectPrevBefore(Long.MAX_VALUE, tag, type);
         }
+        fillPosition(prev, tag, type);
         return prev == null ? ResponseDto.error("暂无知识点，请先添加") : ResponseDto.success(prev);
     }
 
@@ -128,7 +139,28 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeMapper, Knowledge
         }
         appendTypeCondition(wrapper, type);
         Knowledge knowledge = baseMapper.selectOne(wrapper.last("ORDER BY RAND() LIMIT 1"));
+        fillPosition(knowledge, tag, type);
         return knowledge == null ? ResponseDto.error("暂无知识点，请先添加") : ResponseDto.success(knowledge);
+    }
+
+    @Override
+    public ResponseDto<Knowledge> byIndex(Integer index, Integer tag, String type) {
+        if (index == null || index < 1) {
+            return ResponseDto.error("题号不合法");
+        }
+        LambdaQueryWrapper<Knowledge> wrapper = baseQueryWrapper(type)
+                .orderByAsc(Knowledge::getId);
+        if (tag != null) {
+            wrapper.eq(Knowledge::getTag, tag);
+        }
+        appendTypeCondition(wrapper, type);
+        wrapper.last("LIMIT 1 OFFSET " + (index - 1));
+        Knowledge knowledge = baseMapper.selectOne(wrapper);
+        if (knowledge == null) {
+            return ResponseDto.error("题号超出范围");
+        }
+        fillPosition(knowledge, tag, type);
+        return ResponseDto.success(knowledge);
     }
 
     @Override
@@ -229,6 +261,36 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeMapper, Knowledge
         return ResponseDto.success(notes);
     }
 
+    @Override
+    public ResponseDto<KnowledgeTagStat> tagStats() {
+        QueryWrapper<Knowledge> wrapper = new QueryWrapper<>();
+        wrapper.select(
+                        "tag",
+                        "count(*) as total",
+                        "sum(case when view_count > 0 then 1 else 0 end) as learned")
+                .eq("del_flag", NOT_DELETED)
+                .groupBy("tag");
+        List<KnowledgeTagStat> stats = baseMapper.selectMaps(wrapper).stream().map(row -> {
+            KnowledgeTagStat stat = new KnowledgeTagStat();
+            stat.setTag(toInt(row.get("tag"), 0));
+            stat.setTotal(toInt(row.get("total"), 0));
+            stat.setLearned(toInt(row.get("learned"), 0));
+            return stat;
+        }).collect(Collectors.toList());
+        return ResponseDto.success(stats);
+    }
+
+    /** selectMaps 返回的聚合列可能是 String/Number，统一转 int */
+    private int toInt(Object value, int defaultValue) {
+        if (value == null) return defaultValue;
+        if (value instanceof Number) return ((Number) value).intValue();
+        try {
+            return Integer.parseInt(String.valueOf(value).trim());
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
+    }
+
     /** 查询 id 大于 cursor、未删除（tag 非空时同标签）的第一条知识点 */
     private Knowledge selectNextAfter(Long cursor, Integer tag, String type) {
         LambdaQueryWrapper<Knowledge> wrapper = baseQueryWrapper(type)
@@ -253,7 +315,9 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeMapper, Knowledge
 
     private LambdaQueryWrapper<Knowledge> baseQueryWrapper(String type) {
         LambdaQueryWrapper<Knowledge> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(Knowledge::getDelFlag, IGNORED_TYPE.equals(type) ? DELETED : NOT_DELETED);
+        if (!ALL_TYPE.equals(type)) {
+            wrapper.eq(Knowledge::getDelFlag, IGNORED_TYPE.equals(type) ? DELETED : NOT_DELETED);
+        }
         return wrapper;
     }
 
@@ -272,6 +336,28 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeMapper, Knowledge
         }
     }
 
+    /** 计算题目在当前筛选范围内的序号与总数，写入瞬态字段 index/total */
+    private void fillPosition(Knowledge knowledge, Integer tag, String type) {
+        if (knowledge == null || knowledge.getId() == null) {
+            return;
+        }
+        LambdaQueryWrapper<Knowledge> wrapper = baseQueryWrapper(type);
+        if (tag != null) {
+            wrapper.eq(Knowledge::getTag, tag);
+        }
+        appendTypeCondition(wrapper, type);
+        Long total = baseMapper.selectCount(wrapper);
+        LambdaQueryWrapper<Knowledge> indexWrapper = baseQueryWrapper(type)
+                .le(Knowledge::getId, knowledge.getId());
+        if (tag != null) {
+            indexWrapper.eq(Knowledge::getTag, tag);
+        }
+        appendTypeCondition(indexWrapper, type);
+        Long index = baseMapper.selectCount(indexWrapper);
+        knowledge.setIndex(total == 0 ? 0 : index.intValue());
+        knowledge.setTotal(total.intValue());
+    }
+
     private Knowledge requireByType(Long id, String type) {
         if (id == null) {
             return null;
@@ -284,6 +370,9 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeMapper, Knowledge
         boolean ignored = delFlag != null && delFlag == DELETED;
         if (IGNORED_TYPE.equals(type)) {
             return ignored ? knowledge : null;
+        }
+        if (ALL_TYPE.equals(type)) {
+            return knowledge;
         }
         return ignored ? null : knowledge;
     }

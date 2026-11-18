@@ -2,6 +2,7 @@ package com.example.scuser.controller;
 
 import com.curry.model.Knowledge;
 import com.curry.model.KnowledgeNote;
+import com.curry.model.KnowledgeTagStat;
 import com.example.scuser.service.KnowledgeService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -65,6 +66,14 @@ public class KnowledgeController {
         return knowledgeService.random(tag, type);
     }
 
+    /** 按题号（在当前筛选范围内的序号，从 1 开始）跳转 */
+    @GetMapping("/byIndex")
+    public ResponseDto<Knowledge> byIndex(@RequestParam("index") Integer index,
+                                          @RequestParam(value = "tag", required = false) Integer tag,
+                                          @RequestParam(value = "type", required = false) String type) {
+        return knowledgeService.byIndex(index, tag, type);
+    }
+
     /** 查看答案，同时记录查看进度 */
     @PostMapping("/view/{id}")
     public ResponseDto<Knowledge> view(@PathVariable("id") Long id) {
@@ -101,5 +110,11 @@ public class KnowledgeController {
     @GetMapping("/{id}/notes")
     public ResponseDto<KnowledgeNote> listNotes(@PathVariable("id") Long id) {
         return knowledgeService.listNotes(id);
+    }
+
+    /** 按标签统计知识点总数与已学习数，用于标签下拉框进度展示 */
+    @GetMapping("/tagStats")
+    public ResponseDto<KnowledgeTagStat> tagStats() {
+        return knowledgeService.tagStats();
     }
 }

@@ -48,4 +48,12 @@ public class Knowledge {
     @JsonProperty("addTime")
     @TableField("add_time")
     private Date addTime;
+
+    /** 当前题在筛选范围内的序号（从 1 开始），非持久化字段 */
+    @TableField(exist = false)
+    private Integer index;
+
+    /** 当前筛选范围内的题目总数，非持久化字段 */
+    @TableField(exist = false)
+    private Integer total;
 }
