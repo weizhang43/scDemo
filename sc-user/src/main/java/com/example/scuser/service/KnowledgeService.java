@@ -2,7 +2,10 @@ package com.example.scuser.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.curry.model.Knowledge;
+import com.curry.model.KnowledgeDailyStat;
 import com.curry.model.KnowledgeNote;
+import com.curry.model.KnowledgeQuestionTopStat;
+import com.curry.model.KnowledgeTagDetailStat;
 import com.curry.model.KnowledgeTagStat;
 import response.ResponseDto;
 
@@ -49,4 +52,16 @@ public interface KnowledgeService extends IService<Knowledge> {
 
     /** 按标签统计总数与已查看题数（view_count > 0 视为已学），用于标签下拉框进度展示 */
     ResponseDto<KnowledgeTagStat> tagStats();
+
+    /** 时间维度：近七天每日刷题/收藏/笔记/掌握/耗时统计 */
+    ResponseDto<KnowledgeDailyStat> dailyStats();
+
+    /** 标签维度：题目数/耗时/收藏/笔记/掌握 统计 */
+    ResponseDto<KnowledgeTagDetailStat> tagDetailStats();
+
+    /** 试题维度：笔记/耗时/查看 三个 TOP10 排行 */
+    ResponseDto<KnowledgeQuestionTopStat> questionTopStats();
+
+    /** 记录一次查看行为的耗时（秒），由前端在离开题目时回传 */
+    ResponseDto<Void> recordViewDuration(Long id, Integer duration);
 }

@@ -1,7 +1,10 @@
 package com.example.scuser.controller;
 
 import com.curry.model.Knowledge;
+import com.curry.model.KnowledgeDailyStat;
 import com.curry.model.KnowledgeNote;
+import com.curry.model.KnowledgeQuestionTopStat;
+import com.curry.model.KnowledgeTagDetailStat;
 import com.curry.model.KnowledgeTagStat;
 import com.example.scuser.service.KnowledgeService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -116,5 +119,30 @@ public class KnowledgeController {
     @GetMapping("/tagStats")
     public ResponseDto<KnowledgeTagStat> tagStats() {
         return knowledgeService.tagStats();
+    }
+
+    /** 时间维度：近七天每日刷题/收藏/笔记/掌握/耗时 */
+    @GetMapping("/stats/daily")
+    public ResponseDto<KnowledgeDailyStat> dailyStats() {
+        return knowledgeService.dailyStats();
+    }
+
+    /** 标签维度：题目数/耗时/收藏/笔记/掌握 */
+    @GetMapping("/stats/tag")
+    public ResponseDto<KnowledgeTagDetailStat> tagDetailStats() {
+        return knowledgeService.tagDetailStats();
+    }
+
+    /** 试题维度：笔记/耗时/查看 三个 TOP10 */
+    @GetMapping("/stats/questionTop")
+    public ResponseDto<KnowledgeQuestionTopStat> questionTopStats() {
+        return knowledgeService.questionTopStats();
+    }
+
+    /** 上报一次刷题耗时（秒） */
+    @PostMapping("/viewDuration/{id}")
+    public ResponseDto<Void> recordViewDuration(@PathVariable("id") Long id,
+                                                @RequestParam("duration") Integer duration) {
+        return knowledgeService.recordViewDuration(id, duration);
     }
 }
