@@ -194,6 +194,8 @@
                 <spring.profile>dev</spring.profile>
                 <nacos.namespace></nacos.namespace>
                 <nacos.server-addr>localhost:8848</nacos.server-addr>
+                <rabbitmq.consumer.enabled>true</rabbitmq.consumer.enabled>
+                <op-log-sink>mq</op-log-sink>
             </properties>
         </profile>
         <!-- 测试/生产环境（mvn clean package -Ptest） -->
@@ -203,6 +205,8 @@
                 <spring.profile>test</spring.profile>
                 <nacos.namespace></nacos.namespace>
                 <nacos.server-addr>localhost:8848</nacos.server-addr>
+                <rabbitmq.consumer.enabled>false</rabbitmq.consumer.enabled>
+                <op-log-sink>feign</op-log-sink>
             </properties>
         </profile>
     </profiles>

@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.amqp.support.AmqpHeaders;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.stereotype.Component;
 
@@ -31,6 +32,7 @@ import java.io.IOException;
  * 当前不引入去重表，理由：操作日志允许偶发重复（审计场景多一条比少一条好）。
  */
 @Component
+@ConditionalOnProperty(name = "rabbitmq.consumer.enabled", havingValue = "true", matchIfMissing = false)
 public class OperationLogMqListener {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(OperationLogMqListener.class);

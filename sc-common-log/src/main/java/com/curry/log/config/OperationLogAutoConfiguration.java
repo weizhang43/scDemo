@@ -77,9 +77,12 @@ public class OperationLogAutoConfiguration {
      *  - OperationLog 含 Date/Long 等类型，SimpleMessageConverter 在反序列化时类型推断弱；
      *  - Jackson 序列化为 JSON，sc-user 监听端按 OperationLog 类型反序列化无障碍。
      * 容器中仅此一个 MessageConverter Bean 时，Spring Boot 自动应用到 RabbitTemplate。
+     *
+     * 仅在 op-log.sink=mq（默认）时创建：避免未部署 RabbitMQ 的环境因 MessageConverter 触发 RabbitAdmin declare。
      */
     @Bean
     @ConditionalOnMissingBean(MessageConverter.class)
+    @ConditionalOnProperty(prefix = "op-log", name = "sink", havingValue = "mq", matchIfMissing = true)
     public MessageConverter jackson2JsonMessageConverter() {
         return new Jackson2JsonMessageConverter();
     }
@@ -87,24 +90,30 @@ public class OperationLogAutoConfiguration {
     /**
      * 操作日志交换机（direct 类型）。
      * 共享 starter 声明：保证任何引入本 starter 的模块启动后交换机即创建。
+     * 仅在 op-log.sink=mq 时声明：未启用 MQ 的环境不创建 AMQP Bean，避免 RabbitAdmin 触发连接。
      */
     @Bean
+    @ConditionalOnProperty(prefix = "op-log", name = "sink", havingValue = "mq", matchIfMissing = true)
     public DirectExchange operationLogExchange() {
         return new DirectExchange(OperationLogMqConst.EXCHANGE_OPERATION_LOG);
     }
 
     /**
      * 操作日志队列：durable 持久化，broker 重启不丢消息。
+     * 仅在 op-log.sink=mq 时声明。
      */
     @Bean
+    @ConditionalOnProperty(prefix = "op-log", name = "sink", havingValue = "mq", matchIfMissing = true)
     public Queue operationLogQueue() {
         return QueueBuilder.durable(OperationLogMqConst.QUEUE_OPERATION_LOG).build();
     }
 
     /**
      * 绑定队列到交换机：按 routing.key.operation.log 路由。
+     * 仅在 op-log.sink=mq 时声明。
      */
     @Bean
+    @ConditionalOnProperty(prefix = "op-log", name = "sink", havingValue = "mq", matchIfMissing = true)
     public Binding operationLogBinding() {
         return BindingBuilder.bind(operationLogQueue())
                 .to(operationLogExchange())

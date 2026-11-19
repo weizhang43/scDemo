@@ -1,3 +1,12 @@
+# RabbitMQ 消费开关：dev 环境有 RabbitMQ → true；test 环境无 → false，跳过 OperationLogMqListener
+# 由父 pom 的 Maven profile 属性 @rabbitmq.consumer.enabled@ 在构建时注入
+rabbitmq:
+  consumer:
+    enabled: @rabbitmq.consumer.enabled@
+# 操作日志 sink：mq → 走 RabbitMQ（dev）；feign → 走 Feign 转发（test 无 RabbitMQ）
+# 由父 pom 的 Maven profile 属性 @op-log-sink@ 在构建时注入；sc-user 自身有 DbOperationLogSink 直接落库
+op-log:
+  sink: @op-log-sink@
 spring:
   rabbitmq:
     host: localhost
